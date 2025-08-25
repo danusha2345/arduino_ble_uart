@@ -33,16 +33,12 @@ jobs:
       - name: Build PlatformIO Project
         run: pio run
 
-      # 5. DEBUG: List files in the build directory to verify paths
-      - name: List Build Directory Contents
-        run: ls -l .pio/build/esp32-c3-devkitm-1/
-
-      # 6. Create a new GitHub Release and upload the compiled firmware files as assets.
+      # 5. Create a new GitHub Release and upload the compiled firmware files as assets.
       - name: Create Release and Upload Firmware
         uses: ncipollo/release-action@v1
         with:
-          # The paths are relative to the project root.
-          artifacts: ".pio/build/esp32-c3-devkitm-1/firmware.bin,.pio/build/esp32-c3-devkitm-1/partitions.bin,.pio/build/esp32-c3-devkitm-1/bootloader.bin"
+          # The paths are relative to the project root and use the environment name from platformio.ini.
+          artifacts: ".pio/build/esp32dev/firmware.bin,.pio/build/esp32dev/partitions.bin,.pio/build/esp32dev/bootloader.bin"
           
           # The action will use the tag name as the release name.
           token: ${{ secrets.GITHUB_TOKEN }}
