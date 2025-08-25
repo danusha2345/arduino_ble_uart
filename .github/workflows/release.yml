@@ -1,0 +1,43 @@
+# GitHub Action for building and releasing PlatformIO firmware.
+
+name: Build and Release Firmware
+
+# This action is triggered on every push to a tag that starts with 'v' (e.g., v1.0, v2.1.0).
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Check out the repository code
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Python, which is required by PlatformIO
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      # 3. Install PlatformIO Core
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      # 4. Compile the project. PlatformIO will automatically install libraries.
+      - name: Build PlatformIO Project
+        run: pio run -d arduino_ble_uart
+
+      # 5. Create a new GitHub Release and upload the compiled firmware files as assets.
+      - name: Create Release and Upload Firmware
+        uses: ncipollo/release-action@v1
+        with:
+          # This uses the compiled files from the build directory.
+          # The path is based on the 'board' name in platformio.ini.
+          artifacts: "arduino_ble_uart/.pio/build/esp32-c3-devkitm-1/firmware.bin,arduino_ble_uart/.pio/build/esp32-c3-devkitm-1/partitions.bin,arduino_ble_uart/.pio/build/esp32-c3-devkitm-1/bootloader.bin"
+          
+          # The action will use the tag name as the release name.
+          # The GITHUB_TOKEN is automatically created by Actions.
+          token: ${{ secrets.GITHUB_TOKEN }}
