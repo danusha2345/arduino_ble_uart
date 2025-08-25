@@ -11,6 +11,9 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    # Grant the GITHUB_TOKEN permissions to write to the repository (for creating a release).
+    permissions:
+      contents: write
     steps:
       # 1. Check out the repository code
       - name: Check out repository
@@ -30,7 +33,11 @@ jobs:
       - name: Build PlatformIO Project
         run: pio run
 
-      # 5. Create a new GitHub Release and upload the compiled firmware files as assets.
+      # 5. DEBUG: List files in the build directory to verify paths
+      - name: List Build Directory Contents
+        run: ls -l .pio/build/esp32-c3-devkitm-1/
+
+      # 6. Create a new GitHub Release and upload the compiled firmware files as assets.
       - name: Create Release and Upload Firmware
         uses: ncipollo/release-action@v1
         with:
