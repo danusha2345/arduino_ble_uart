@@ -26,7 +26,7 @@ jobs:
       - name: Install PlatformIO
         run: pip install -U platformio
 
-      # 4. Compile the project. PlatformIO will automatically install libraries.
+      # 4. Compile the project. The working directory is the project root.
       - name: Build PlatformIO Project
         run: pio run
 
@@ -34,10 +34,8 @@ jobs:
       - name: Create Release and Upload Firmware
         uses: ncipollo/release-action@v1
         with:
-          # This uses the compiled files from the build directory.
-          # The path is based on the 'board' name in platformio.ini.
+          # The paths are relative to the project root.
           artifacts: ".pio/build/esp32-c3-devkitm-1/firmware.bin,.pio/build/esp32-c3-devkitm-1/partitions.bin,.pio/build/esp32-c3-devkitm-1/bootloader.bin"
           
           # The action will use the tag name as the release name.
-          # The GITHUB_TOKEN is automatically created by Actions.
           token: ${{ secrets.GITHUB_TOKEN }}
