@@ -11,6 +11,9 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    # Grant the GITHUB_TOKEN permissions to write to the repository (for creating a release).
+    permissions:
+      contents: write
     steps:
       # 1. Check out the repository code
       - name: Check out repository
