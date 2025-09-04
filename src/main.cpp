@@ -33,7 +33,7 @@ struct GPSData {
     double verticalAccuracy = 999.9;
     int satellites = 0;  // Количество спутников в фиксе из GGA
     int total_gsa_sats = 0;  // Общий подсчет из GSA сообщений для сравнения
-    int gps_sats = 0, glonass_sats = 0, galileo_sats = 0, beidou_sats = 0;  // Спутники в фиксе по системам
+    int gps_sats = 0, glonass_sats = 0, galileo_sats = 0, beidou_sats = 0, qzss_sats = 0;  // Спутники в фиксе по системам
     int fixQuality = 0;  // Качество фикса из GGA (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float)
     bool valid = false;
     unsigned long lastUpdate = 0;
@@ -143,24 +143,19 @@ void parseNmeaAccuracy(String nmea) {
         }
     }
     
-    // Парсим GNGSA сообщения с полем talker ID
-    if (nmea.startsWith("$GNGSA")) {
+    // Парсим GSA сообщения с полем talker ID (GNGSA, GPGSA, GLGSA, GAGSA, BDGSA)
+    if (nmea.startsWith("$GNGSA") || nmea.startsWith("$GPGSA") || nmea.startsWith("$GLGSA") || 
+        nmea.startsWith("$GAGSA") || nmea.startsWith("$BDGSA")) {
         // Разбиваем на поля
         int commaIndex[20]; int commaCount = 0;
         for (int i = 0; i < nmea.length() && commaCount < 20; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
         
-        if (commaCount >= 17) { // Нужно минимум 17 полей
-            // Получаем talker ID - последнее поле перед чексуммой
-            int asteriskPos = nmea.indexOf('*');
-            int lastComma = nmea.lastIndexOf(',');
-            String talkerStr = nmea.substring(lastComma + 1, asteriskPos);
-            int talkerId = talkerStr.toInt();
-            
+        if (commaCount >= 14) { // Нужно минимум поля с ID спутников
             // Подсчитываем непустые ID спутников в полях 3-14
             int count = 0;
-            for (int i = 2; i < 14 && i < commaCount - 3; i++) { // поля 3-14 (индексы 2-13)
+            for (int i = 2; i < 14 && i < commaCount; i++) { // поля 3-14 (индексы 2-13)
                 String satId = nmea.substring(commaIndex[i] + 1, commaIndex[i + 1]);
                 satId.trim(); // Убираем пробелы
                 if (satId.length() > 0 && !satId.equals("")) {
@@ -168,14 +163,33 @@ void parseNmeaAccuracy(String nmea) {
                 }
             }
             
-            // Определяем систему по talker ID
-            if (talkerId == 1) gpsData.gps_sats = count;        // GPS
-            else if (talkerId == 2) gpsData.glonass_sats = count; // GLONASS  
-            else if (talkerId == 3) gpsData.galileo_sats = count; // Galileo
-            else if (talkerId == 4 || talkerId == 5) gpsData.beidou_sats = count;  // BeiDou
+            // Определяем систему по префиксу сообщения
+            if (nmea.startsWith("$GPGSA")) {
+                gpsData.gps_sats = count;        // GPS
+            } else if (nmea.startsWith("$GLGSA")) {
+                gpsData.glonass_sats = count;    // GLONASS
+            } else if (nmea.startsWith("$GAGSA")) {
+                gpsData.galileo_sats = count;    // Galileo
+            } else if (nmea.startsWith("$BDGSA")) {
+                gpsData.beidou_sats = count;     // BeiDou
+            } else if (nmea.startsWith("$GNGSA")) {
+                // Для GNGSA используем talker ID
+                if (commaCount >= 17) {
+                    int asteriskPos = nmea.indexOf('*');
+                    int lastComma = nmea.lastIndexOf(',');
+                    String talkerStr = nmea.substring(lastComma + 1, asteriskPos);
+                    int talkerId = talkerStr.toInt();
+                    
+                    if (talkerId == 1) gpsData.gps_sats = count;        // GPS
+                    else if (talkerId == 2) gpsData.glonass_sats = count; // GLONASS
+                    else if (talkerId == 3) gpsData.galileo_sats = count; // Galileo
+                    else if (talkerId == 4) gpsData.beidou_sats = count;  // BeiDou
+                    else if (talkerId == 5) gpsData.qzss_sats = count;    // QZSS
+                }
+            }
             
             // Пересчитываем общую сумму GSA спутников для сравнения
-            gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats;
+            gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats + gpsData.qzss_sats;
         }
     }
 }
@@ -214,7 +228,11 @@ void updateDisplay() {
         display.print("G:"); display.print(gpsData.gps_sats);
         display.print(" R:"); display.print(gpsData.glonass_sats);
         display.print(" E:"); display.print(gpsData.galileo_sats);
-        display.print(" C:"); display.println(gpsData.beidou_sats);
+        display.print(" B:"); display.print(gpsData.beidou_sats);
+        if (gpsData.qzss_sats > 0) {
+            display.print(" Q:"); display.print(gpsData.qzss_sats);
+        }
+        display.println();
     } else {
         display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         if (gpsData.total_gsa_sats > 0) {
@@ -222,7 +240,11 @@ void updateDisplay() {
             display.print("G:"); display.print(gpsData.gps_sats);
             display.print(" R:"); display.print(gpsData.glonass_sats);
             display.print(" E:"); display.print(gpsData.galileo_sats);
-            display.print(" C:"); display.println(gpsData.beidou_sats);
+            display.print(" B:"); display.print(gpsData.beidou_sats);
+            if (gpsData.qzss_sats > 0) {
+                display.print(" Q:"); display.print(gpsData.qzss_sats);
+            }
+            display.println();
         } else {
             display.println("Searching GPS...");
         }
