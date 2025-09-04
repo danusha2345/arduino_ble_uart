@@ -28,16 +28,24 @@ TinyGPSPlus gps;
 // GPS данные
 struct GPSData {
     double latitude = 0.0, longitude = 0.0;
-    double horizontalAccuracy = 999.9;
+    double latAccuracy = 999.9;  // Точность по широте
+    double lonAccuracy = 999.9;  // Точность по долготе
     double verticalAccuracy = 999.9;
     int satellites = 0;  // Количество спутников в фиксе из GGA
+    int total_gsa_sats = 0;  // Общий подсчет из GSA сообщений для сравнения
     int gps_sats = 0, glonass_sats = 0, galileo_sats = 0, beidou_sats = 0;  // Спутники в фиксе по системам
+    int fixQuality = 0;  // Качество фикса из GGA (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float)
     bool valid = false;
     unsigned long lastUpdate = 0;
 } gpsData;
 
 // Буфер для парсинга NMEA строк
 String nmeaBuffer = "";
+
+// Буфер для быстрой BLE передачи
+uint8_t bleBuffer[512];
+int bleBufferPos = 0;
+unsigned long lastBleFlush = 0;
 
 // UUIDs для Nordic UART Service (NUS)
 #define SERVICE_UUID        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -87,29 +95,46 @@ void parseNmeaAccuracy(String nmea) {
             }
         }
         if (commaCount >= 8) {
-            // Горизонтальная точность - 6-ое поле (индекс 5)
-            String hAccStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
-            hAccStr.trim();
-            if (hAccStr.length() > 0) {
-                gpsData.horizontalAccuracy = hAccStr.toFloat();
+            // Поле 6: RMS lat error (север-юг)
+            String latAccStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
+            latAccStr.trim();
+            
+            // Поле 7: RMS lon error (восток-запад)
+            String lonAccStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
+            lonAccStr.trim();
+            
+            // Поле 8: RMS alt error (высота)
+            String altAccStr = nmea.substring(commaIndex[7] + 1, commaIndex[8]);
+            altAccStr.trim();
+            
+            if (latAccStr.length() > 0) {
+                gpsData.latAccuracy = latAccStr.toFloat();
             }
-            // Вертикальная точность - 7-ое поле (индекс 6)
-            String vAccStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
-            vAccStr.trim();
-            if (vAccStr.length() > 0) {
-                gpsData.verticalAccuracy = vAccStr.toFloat();
+            
+            if (lonAccStr.length() > 0) {
+                gpsData.lonAccuracy = lonAccStr.toFloat();
+            }
+            
+            if (altAccStr.length() > 0) {
+                gpsData.verticalAccuracy = altAccStr.toFloat();
             }
         }
     }
     
     
-    // Парсим GGA для получения количества спутников в фиксе
+    // Парсим GGA для получения количества спутников и качества фикса
     if (nmea.startsWith("$GNGGA") || nmea.startsWith("$GPGGA")) {
         int commaIndex[15]; int commaCount = 0;
         for (int i = 0; i < nmea.length() && commaCount < 15; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
         if (commaCount >= 7) {
+            // Качество фикса - 6-ое поле (индекс 5)
+            String qualityStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
+            if (qualityStr.length() > 0) {
+                gpsData.fixQuality = qualityStr.toInt();
+            }
+            
             // Количество спутников в фиксе - 7-ое поле
             String satCountStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
             if (satCountStr.length() > 0) {
@@ -148,7 +173,22 @@ void parseNmeaAccuracy(String nmea) {
             else if (talkerId == 2) gpsData.glonass_sats = count; // GLONASS  
             else if (talkerId == 3) gpsData.galileo_sats = count; // Galileo
             else if (talkerId == 4 || talkerId == 5) gpsData.beidou_sats = count;  // BeiDou
+            
+            // Пересчитываем общую сумму GSA спутников для сравнения
+            gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats;
         }
+    }
+}
+
+String getFixTypeString(int quality) {
+    switch(quality) {
+        case 0: return "NO FIX";
+        case 1: return "GPS";
+        case 2: return "DGPS";
+        case 4: return "RTK FIXED";
+        case 5: return "RTK FLOAT";
+        case 6: return "ESTIMATED";
+        default: return "UNKNOWN";
     }
 }
 
@@ -162,26 +202,29 @@ void updateDisplay() {
     display.setTextSize(1);
     
     if (gpsData.valid && (millis() - gpsData.lastUpdate < 5000)) {
-        display.print("Sats: "); display.println(gpsData.satellites);
+        display.print("Sats: "); display.print(gpsData.total_gsa_sats);
+        display.print(" Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         display.print("Lat: "); display.println(gpsData.latitude, 6);
         display.print("Lon: "); display.println(gpsData.longitude, 6);
-        if (gpsData.horizontalAccuracy < 99.9) {
-            display.print("H: "); display.print(gpsData.horizontalAccuracy, 1);
-            display.print(" V: "); display.print(gpsData.verticalAccuracy, 1); display.println("m");
+        if (gpsData.latAccuracy < 99.9 || gpsData.lonAccuracy < 99.9) {
+            display.print("N/S:"); display.print(gpsData.latAccuracy, 1);
+            display.print(" E/W:"); display.print(gpsData.lonAccuracy, 1); display.println("m");
+            display.print("Alt:"); display.print(gpsData.verticalAccuracy, 1); display.println("m");
         }
         display.print("G:"); display.print(gpsData.gps_sats);
         display.print(" R:"); display.print(gpsData.glonass_sats);
         display.print(" E:"); display.print(gpsData.galileo_sats);
         display.print(" C:"); display.println(gpsData.beidou_sats);
     } else {
-        display.println("Searching GPS...");
-        if (gpsData.satellites > 0) {
+        display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
+        if (gpsData.total_gsa_sats > 0) {
+            display.print("Sats: "); display.println(gpsData.total_gsa_sats);
             display.print("G:"); display.print(gpsData.gps_sats);
             display.print(" R:"); display.print(gpsData.glonass_sats);
             display.print(" E:"); display.print(gpsData.galileo_sats);
             display.print(" C:"); display.println(gpsData.beidou_sats);
         } else {
-            display.print("Sats: "); display.println(gpsData.satellites);
+            display.println("Searching GPS...");
         }
     }
     
@@ -218,7 +261,7 @@ void setup() {
     SerialPort.begin(460800, SERIAL_8N1, 8, 10);
 
     // Инициализация BLE
-    NimBLEDevice::init("ESP32-BLE-UART");
+    NimBLEDevice::init("ESP32-BLE-UART_2");
 
     // Увеличиваем MTU для максимальной скорости
     NimBLEDevice::setMTU(517);
@@ -264,9 +307,9 @@ void setup() {
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
-    // Устанавливаем минимальный и максимальный интервал подключения для высокой скорости
-    pAdvertising->setMinPreferred(0x06); // 7.5ms
-    pAdvertising->setMaxPreferred(0x0C); // 15ms
+    // Максимальная скорость - минимальные интервалы
+    pAdvertising->setMinPreferred(0x06); // 7.5ms - самый быстрый
+    pAdvertising->setMaxPreferred(0x06); // 7.5ms - фиксированная скорость
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
 }
@@ -293,14 +336,28 @@ void loop() {
             }
         }
         
-        // Если устройство подключено, отправляем сырые данные по BLE
+        // Буферизуем данные для BLE
         if (deviceConnected) {
-            uint8_t data = c;
-            pTxCharacteristic->setValue(&data, 1);
-            pTxCharacteristic->notify();
+            bleBuffer[bleBufferPos++] = c;
+            
+            // Отправляем полные пакеты или по таймеру
+            if (bleBufferPos >= 500 || (bleBufferPos > 0 && millis() - lastBleFlush > 20)) {
+                pTxCharacteristic->setValue(bleBuffer, bleBufferPos);
+                pTxCharacteristic->notify();
+                bleBufferPos = 0;
+                lastBleFlush = millis();
+            }
         }
     }
 
+    // Принудительно отправляем оставшиеся BLE данные по таймеру
+    if (deviceConnected && bleBufferPos > 0 && millis() - lastBleFlush > 50) {
+        pTxCharacteristic->setValue(bleBuffer, bleBufferPos);
+        pTxCharacteristic->notify();
+        bleBufferPos = 0;
+        lastBleFlush = millis();
+    }
+    
     // Обновляем дисплей
     updateDisplay();
 

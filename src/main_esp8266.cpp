@@ -8,6 +8,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <TinyGPS++.h>
+#include <SoftwareSerial.h>
 
 // --- OLED Дисплей ---
 #define SCREEN_WIDTH 128
@@ -25,8 +26,7 @@ ESP8266WebServer server(80);
 WebSocketsServer webSocket(81);
 
 // --- GPS ---
-#define GPS_SERIAL Serial1
-#define GPS_BAUD 460800 // ИЗМЕНЕНО: Скорость порта для GPS
+#define GPS_BAUD 460800 // Ваша скорость  
 TinyGPSPlus gps;
 
 // --- Глобальные переменные ---
@@ -99,12 +99,12 @@ void parseNmeaAccuracy(String nmea) {
 }
 
 void updateDisplay() {
-    if (!displayInitialized || millis() - lastDisplayUpdate < 1000) return; 
+    if (!displayInitialized || millis() - lastDisplayUpdate < 1000) return;
     
     display.clearDisplay();
     display.setCursor(0,0);
     display.setTextSize(1);
-    display.println("GPS Bridge"); // Сокращенная надпись
+    display.println("GPS Bridge");
     display.println("---------------");
     
     if (gpsData.fixQuality > 0 && (millis() - gpsData.lastUpdate < 5000)) {
@@ -131,13 +131,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 }
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(115200); // Стандартная скорость для логов
     Serial.println("\nStarting ESP8266 Bridge with Hardware UART...");
     
     setupDisplay();
     
-    GPS_SERIAL.begin(GPS_BAUD, SERIAL_8N1, SERIAL_RX_ONLY);
-    Serial.println("Hardware UART for GPS initialized on D4 (GPIO2).");
+    // GPS подключен к RX пину (GPIO3) - это Serial0 RX!
+    // НЕ можем использовать Serial для GPS, так как это USB порт
+    // Используем SoftwareSerial на GPIO3
+    Serial.printf("WARNING: GPS на RX пине (GPIO3) конфликтует с USB!\n");
+    Serial.println("Рекомендуется переподключить GPS к другому пину");
     
     WiFi.mode(WIFI_AP);
     WiFi.softAP(ap_ssid, ap_password);
@@ -159,12 +162,16 @@ void loop() {
     server.handleClient();
     webSocket.loop();
 
-    while (GPS_SERIAL.available() > 0) {
-        char c = GPS_SERIAL.read();
+    static unsigned long lastGpsCheck = 0;
+    String wsBuffer = "";
+    int bytesRead = 0;
+    
+    while (Serial1.available() > 0) {
+        char c = Serial1.read();
+        bytesRead++;
         
         if (clientConnected) {
-            String charStr = String(c);
-            webSocket.broadcastTXT(charStr);
+            wsBuffer += c;
         }
         
         uartBuffer += c;
@@ -175,16 +182,40 @@ void loop() {
                 gpsData.longitude = gps.location.lng();
                 gpsData.valid = true;
                 gpsData.lastUpdate = millis();
+                Serial.printf("GPS: %.6f, %.6f\n", gpsData.latitude, gpsData.longitude);
             }
             if (gps.satellites.isValid()) {
                 gpsData.satellites = gps.satellites.value();
+                Serial.printf("Satellites: %d\n", gpsData.satellites);
             }
         }
     }
 
-    if (uartBuffer.indexOf('\n') != -1) {
-        parseNmeaAccuracy(uartBuffer);
-        uartBuffer = "";
+    // Debug каждые 5 секунд
+    if (millis() - lastGpsCheck > 5000) {
+        lastGpsCheck = millis();
+        if (bytesRead == 0) {
+            Serial.println("WARNING: No GPS data received in last 5 seconds!");
+            Serial.println("Check GPS connection to D4 (GPIO2)");
+        } else {
+            Serial.printf("GPS OK: %d bytes in last 5 sec\n", bytesRead);
+        }
+        bytesRead = 0;
+    }
+
+    // Отправляем накопленные данные в WebSocket одним пакетом
+    if (clientConnected && wsBuffer.length() > 0) {
+        webSocket.broadcastTXT(wsBuffer);
+    }
+
+    // Обрабатываем все полные строки в буфере
+    int lineEnd;
+    while ((lineEnd = uartBuffer.indexOf('\n')) != -1) {
+        String line = uartBuffer.substring(0, lineEnd + 1);
+        Serial.print("NMEA: ");
+        Serial.print(line);
+        parseNmeaAccuracy(line);
+        uartBuffer = uartBuffer.substring(lineEnd + 1);
     }
     
     updateDisplay();
