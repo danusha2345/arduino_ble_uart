@@ -6,17 +6,43 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <TinyGPS++.h>
+#include <Arduino_GFX_Library.h>
+#include <SPI.h>
 
 // Используем второй аппаратный UART (Serial1, т.к. Serial0 занят USB)
 // RX-пин: GPIO8, TX-пин: GPIO10
 HardwareSerial SerialPort(1);
 
-// I2C Display настройки
+// I2C OLED Display настройки
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
 #define SCREEN_ADDRESS 0x78 // I2C адрес дисплея
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// TFT ST7789V Display - Arduino_GFX библиотека
+// Пины подключения: GPIO0=SCLK, GPIO1=MOSI, GPIO2=DC, GPIO9=RST, GPIO5=BL
+#define TFT_CS    -1  // Не используется
+#define TFT_RST    9  // Reset pin
+#define TFT_DC     2  // Data/Command pin  
+#define TFT_MOSI   1  // SPI Data
+#define TFT_SCLK   0  // SPI Clock
+#define TFT_BL     5  // Backlight pin
+
+// Arduino_GFX инициализация для ST7789V
+Arduino_DataBus *bus = new Arduino_ESP32SPI(TFT_DC, TFT_CS, TFT_SCLK, TFT_MOSI, -1);
+Arduino_GFX *tft = new Arduino_ST7789(bus, TFT_RST, 1 /* rotation 90° */, true /* IPS */, 135 /* width */, 240 /* height */, 52 /* col offset 1 */, 40 /* row offset 1 */, 53 /* col offset 2 */, 40 /* row offset 2 */);
+
+// Arduino_GFX уже имеет встроенные цветовые константы
+#define TFT_BLACK   BLACK
+#define TFT_BLUE    BLUE  
+#define TFT_RED     RED
+#define TFT_GREEN   GREEN
+#define TFT_CYAN    CYAN
+#define TFT_MAGENTA MAGENTA
+#define TFT_YELLOW  YELLOW
+#define TFT_WHITE   WHITE
+#define TFT_ORANGE  ORANGE
 
 // GPS
 TinyGPSPlus gps;
@@ -283,11 +309,18 @@ void updateDisplay() {
     if (millis() - lastUpdate < 1000) return; // Обновляем раз в секунду
     lastUpdate = millis();
     
+    // Обновляем OLED дисплей
     display.clearDisplay();
     display.setCursor(0,0);
     display.setTextSize(1);
     
+    // Обновляем TFT дисплей с кастомной конфигурацией
+    tft->fillScreen(TFT_BLACK);
+    tft->setCursor(0, 0);
+    tft->setTextSize(2);
+    
     if (gpsData.valid && (millis() - gpsData.lastUpdate < 5000)) {
+        // OLED дисплей
         display.print("Sats: "); display.print(gpsData.total_gsa_sats);
         display.print(" Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         display.print("Lat: "); display.println(gpsData.latitude, 6);
@@ -306,7 +339,37 @@ void updateDisplay() {
             display.print(" Q:"); display.print(gpsData.qzss_sats);
         }
         display.println();
+        
+        // TFT дисплей с цветным форматированием
+        tft->setTextColor(TFT_GREEN);
+        tft->print("Sats: "); tft->print(gpsData.total_gsa_sats);
+        tft->setTextColor(TFT_CYAN);
+        tft->print(" Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
+        tft->setTextColor(TFT_WHITE);
+        tft->print("Lat: "); tft->println(gpsData.latitude, 6);
+        tft->print("Lon: "); tft->println(gpsData.longitude, 6);
+        tft->setTextColor(TFT_YELLOW);
+        tft->print("Alt: "); tft->print(gpsData.altitude, 1); tft->println("m");
+        
+        if (gpsData.latAccuracy < 99.9 || gpsData.lonAccuracy < 99.9) {
+            tft->setTextColor(TFT_MAGENTA);
+            tft->print("N/S: "); tft->print(gpsData.latAccuracy, 1);
+            tft->print(" E/W: "); tft->print(gpsData.lonAccuracy, 1); tft->println("m");
+            tft->print("H: "); tft->print(gpsData.verticalAccuracy, 1); tft->println("m");
+        }
+        
+        tft->setTextColor(TFT_WHITE);
+        tft->print("G:"); tft->print(gpsData.gps_sats);
+        tft->print(" R:"); tft->print(gpsData.glonass_sats);
+        tft->print(" E:"); tft->print(gpsData.galileo_sats);
+        tft->print(" B:"); tft->print(gpsData.beidou_sats);
+        if (gpsData.qzss_sats > 0) {
+            tft->print(" Q:"); tft->print(gpsData.qzss_sats);
+        }
+        tft->println();
+        
     } else {
+        // OLED дисплей
         display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         if (gpsData.total_gsa_sats > 0) {
             display.print("Sats: "); display.println(gpsData.total_gsa_sats);
@@ -321,8 +384,27 @@ void updateDisplay() {
         } else {
             display.println("Searching GPS...");
         }
+        
+        // TFT дисплей
+        tft->setTextColor(TFT_ORANGE);
+        tft->print("Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
+        if (gpsData.total_gsa_sats > 0) {
+            tft->setTextColor(TFT_GREEN);
+            tft->print("Sats: "); tft->println(gpsData.total_gsa_sats);
+            tft->setTextColor(TFT_WHITE);
+            tft->print("G:"); tft->print(gpsData.gps_sats);
+            tft->print(" R:"); tft->print(gpsData.glonass_sats);
+            tft->print(" E:"); tft->print(gpsData.galileo_sats);
+            tft->print(" B:"); tft->print(gpsData.beidou_sats);
+            if (gpsData.qzss_sats > 0) {
+                tft->print(" Q:"); tft->print(gpsData.qzss_sats);
+            }
+            tft->println();
+        } else {
+            tft->setTextColor(TFT_BLUE);
+            tft->println("Searching GPS...");
+        }
     }
-    
     
     display.display();
 }
@@ -336,12 +418,12 @@ void setup() {
     esp_wifi_set_ps(WIFI_PS_NONE);
     Serial.println("Modem power saving disabled.");
 
-    // Инициализация I2C и дисплея
+    // Инициализация I2C и OLED дисплея
     Wire.begin(SDA_PIN, SCL_PIN);
     if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS >> 1)) { // Адрес делим на 2!
         Serial.println("ERROR: SSD1306 allocation failed!");
     } else {
-        Serial.println("Display initialized successfully!");
+        Serial.println("OLED Display initialized successfully!");
         display.clearDisplay();
         display.setTextSize(1);
         display.setTextColor(SSD1306_WHITE);
@@ -350,6 +432,22 @@ void setup() {
         display.println("Waiting for GPS...");
         display.display();
     }
+
+    // Инициализация SPI и TFT дисплея с кастомной конфигурацией
+    pinMode(TFT_BL, OUTPUT); // TFT_BL = GPIO5
+    digitalWrite(TFT_BL, HIGH); // Включаем подсветку
+    
+    // Инициализируем TFT с Arduino_GFX библиотекой
+    tft->begin();
+    tft->fillScreen(TFT_BLACK);
+    tft->setTextColor(TFT_WHITE);
+    tft->setTextSize(2);
+    tft->setCursor(0, 0);
+    tft->println("GPS Bridge ESP32-C3");
+    tft->println("ST7789V TFT Ready");
+    tft->println("Arduino_GFX v1.6.1");
+    tft->println("Waiting for GPS...");
+    Serial.println("TFT Display initialized with Arduino_GFX!");
 
     // Запускаем UART1 для передачи данных
     // RX = 8, TX = 10
