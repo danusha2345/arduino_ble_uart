@@ -27,7 +27,7 @@ TinyGPSPlus gps;
 
 // GPS данные
 struct GPSData {
-    double latitude = 0.0, longitude = 0.0;
+    double latitude = 0.0, longitude = 0.0, altitude = 0.0;
     double latAccuracy = 999.9;  // Точность по широте
     double lonAccuracy = 999.9;  // Точность по долготе
     double verticalAccuracy = 999.9;
@@ -37,6 +37,9 @@ struct GPSData {
     int fixQuality = 0;  // Качество фикса из GGA (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float)
     bool valid = false;
     unsigned long lastUpdate = 0;
+    unsigned long lastGsaUpdate = 0;  // Общее время последнего GSA обновления
+    unsigned long lastGpsUpdate = 0, lastGlonassUpdate = 0, lastGalileoUpdate = 0, lastBeidouUpdate = 0, lastQzssUpdate = 0;  // Время по системам
+    unsigned long lastGstUpdate = 0;  // Последнее обновление GST данных (точность)
 } gpsData;
 
 // Буфер для парсинга NMEA строк
@@ -110,16 +113,26 @@ void parseNmeaAccuracy(String nmea) {
             String altAccStr = nmea.substring(commaIndex[7] + 1, commaIndex[8]);
             altAccStr.trim();
             
-            if (latAccStr.length() > 0) {
+            bool hasValidAccuracy = false;
+            
+            if (latAccStr.length() > 0 && latAccStr.toFloat() > 0.0) {
                 gpsData.latAccuracy = latAccStr.toFloat();
+                hasValidAccuracy = true;
             }
             
-            if (lonAccStr.length() > 0) {
+            if (lonAccStr.length() > 0 && lonAccStr.toFloat() > 0.0) {
                 gpsData.lonAccuracy = lonAccStr.toFloat();
+                hasValidAccuracy = true;
             }
             
-            if (altAccStr.length() > 0) {
+            if (altAccStr.length() > 0 && altAccStr.toFloat() > 0.0) {
                 gpsData.verticalAccuracy = altAccStr.toFloat();
+                hasValidAccuracy = true;
+            }
+            
+            // Обновляем время только если получили валидные данные точности
+            if (hasValidAccuracy) {
+                gpsData.lastGstUpdate = millis();
             }
         }
     }
@@ -131,7 +144,7 @@ void parseNmeaAccuracy(String nmea) {
         for (int i = 0; i < nmea.length() && commaCount < 15; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
-        if (commaCount >= 8) {
+        if (commaCount >= 9) {
             // Координаты - поля 2-5
             String latStr = nmea.substring(commaIndex[1] + 1, commaIndex[2]);
             String latHem = nmea.substring(commaIndex[2] + 1, commaIndex[3]);
@@ -147,6 +160,12 @@ void parseNmeaAccuracy(String nmea) {
                 
                 gpsData.valid = true;
                 gpsData.lastUpdate = millis();
+            }
+            
+            // Высота - поле 9
+            String altStr = nmea.substring(commaIndex[8] + 1, commaIndex[9]);
+            if (altStr.length() > 0) {
+                gpsData.altitude = altStr.toFloat();
             }
             
             // Mode indicators - 6-ое поле (определяет качество фикса)
@@ -189,15 +208,21 @@ void parseNmeaAccuracy(String nmea) {
                 }
             }
             
+            unsigned long currentTime = millis();
+            
             // Определяем систему по префиксу сообщения
             if (nmea.startsWith("$GPGSA")) {
                 gpsData.gps_sats = count;        // GPS
+                gpsData.lastGpsUpdate = currentTime;
             } else if (nmea.startsWith("$GLGSA")) {
                 gpsData.glonass_sats = count;    // GLONASS
+                gpsData.lastGlonassUpdate = currentTime;
             } else if (nmea.startsWith("$GAGSA")) {
                 gpsData.galileo_sats = count;    // Galileo
+                gpsData.lastGalileoUpdate = currentTime;
             } else if (nmea.startsWith("$BDGSA")) {
                 gpsData.beidou_sats = count;     // BeiDou
+                gpsData.lastBeidouUpdate = currentTime;
             } else if (nmea.startsWith("$GNGSA")) {
                 // Для GNGSA используем talker ID
                 if (commaCount >= 17) {
@@ -206,16 +231,30 @@ void parseNmeaAccuracy(String nmea) {
                     String talkerStr = nmea.substring(lastComma + 1, asteriskPos);
                     int talkerId = talkerStr.toInt();
                     
-                    if (talkerId == 1) gpsData.gps_sats = count;        // GPS
-                    else if (talkerId == 2) gpsData.glonass_sats = count; // GLONASS
-                    else if (talkerId == 3) gpsData.galileo_sats = count; // Galileo
-                    else if (talkerId == 4) gpsData.beidou_sats = count;  // BeiDou
-                    else if (talkerId == 5) gpsData.qzss_sats = count;    // QZSS
+                    if (talkerId == 1) {
+                        gpsData.gps_sats = count;        // GPS
+                        gpsData.lastGpsUpdate = currentTime;
+                    } else if (talkerId == 2) {
+                        gpsData.glonass_sats = count; // GLONASS
+                        gpsData.lastGlonassUpdate = currentTime;
+                    } else if (talkerId == 3) {
+                        gpsData.galileo_sats = count; // Galileo
+                        gpsData.lastGalileoUpdate = currentTime;
+                    } else if (talkerId == 4) {
+                        gpsData.beidou_sats = count;  // BeiDou
+                        gpsData.lastBeidouUpdate = currentTime;
+                    } else if (talkerId == 5) {
+                        gpsData.qzss_sats = count;    // QZSS
+                        gpsData.lastQzssUpdate = currentTime;
+                    }
                 }
             }
             
             // Пересчитываем общую сумму GSA спутников для сравнения
             gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats + gpsData.qzss_sats;
+            
+            // Обновляем время последнего GSA сообщения
+            gpsData.lastGsaUpdate = millis();
         }
     }
 }
@@ -253,10 +292,11 @@ void updateDisplay() {
         display.print(" Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         display.print("Lat: "); display.println(gpsData.latitude, 6);
         display.print("Lon: "); display.println(gpsData.longitude, 6);
+        display.print("Alt: "); display.print(gpsData.altitude, 1); display.println("m");
         if (gpsData.latAccuracy < 99.9 || gpsData.lonAccuracy < 99.9) {
             display.print("N/S:"); display.print(gpsData.latAccuracy, 1);
             display.print(" E/W:"); display.print(gpsData.lonAccuracy, 1); display.println("m");
-            display.print("Alt:"); display.print(gpsData.verticalAccuracy, 1); display.println("m");
+            display.print("H:"); display.print(gpsData.verticalAccuracy, 1); display.println("m");
         }
         display.print("G:"); display.print(gpsData.gps_sats);
         display.print(" R:"); display.print(gpsData.glonass_sats);
@@ -369,6 +409,37 @@ void setup() {
     Serial.println("Advertising started. Waiting for a client connection...");
 }
 
+void checkDataTimeouts() {
+    unsigned long currentTime = millis();
+    
+    // Сбрасываем данные о спутниках каждой системы индивидуально если не обновлялись > 5 секунд
+    if (currentTime - gpsData.lastGpsUpdate > 5000) {
+        gpsData.gps_sats = 0;
+    }
+    if (currentTime - gpsData.lastGlonassUpdate > 5000) {
+        gpsData.glonass_sats = 0;
+    }
+    if (currentTime - gpsData.lastGalileoUpdate > 5000) {
+        gpsData.galileo_sats = 0;
+    }
+    if (currentTime - gpsData.lastBeidouUpdate > 5000) {
+        gpsData.beidou_sats = 0;
+    }
+    if (currentTime - gpsData.lastQzssUpdate > 5000) {
+        gpsData.qzss_sats = 0;
+    }
+    
+    // Пересчитываем общий счетчик GSA спутников
+    gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats + gpsData.qzss_sats;
+    
+    // Сбрасываем данные о точности если GST не обновлялись > 5 секунд ИЛИ нет GPS фикса
+    if (currentTime - gpsData.lastGstUpdate > 5000 || !gpsData.valid || gpsData.fixQuality == 0) {
+        gpsData.latAccuracy = 999.9;
+        gpsData.lonAccuracy = 999.9;
+        gpsData.verticalAccuracy = 999.9;
+    }
+}
+
 void loop() {
     // Читаем и парсим GPS данные
     while (SerialPort.available()) {
@@ -412,6 +483,9 @@ void loop() {
         bleBufferPos = 0;
         lastBleFlush = millis();
     }
+    
+    // Проверяем устаревшие данные
+    checkDataTimeouts();
     
     // Обновляем дисплей
     updateDisplay();
