@@ -42,6 +42,9 @@ struct GPSData {
 // Буфер для парсинга NMEA строк
 String nmeaBuffer = "";
 
+// Объявления функций
+double convertToDecimalDegrees(double ddmm);
+
 // Буфер для быстрой BLE передачи
 uint8_t bleBuffer[512];
 int bleBufferPos = 0;
@@ -122,17 +125,40 @@ void parseNmeaAccuracy(String nmea) {
     }
     
     
-    // Парсим GGA для получения количества спутников и качества фикса
-    if (nmea.startsWith("$GNGGA") || nmea.startsWith("$GPGGA")) {
+    // Парсим GNS для получения координат, количества спутников и качества фикса
+    if (nmea.startsWith("$GNGNS") || nmea.startsWith("$GPGNS")) {
         int commaIndex[15]; int commaCount = 0;
         for (int i = 0; i < nmea.length() && commaCount < 15; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
-        if (commaCount >= 7) {
-            // Качество фикса - 6-ое поле (индекс 5)
-            String qualityStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
-            if (qualityStr.length() > 0) {
-                gpsData.fixQuality = qualityStr.toInt();
+        if (commaCount >= 8) {
+            // Координаты - поля 2-5
+            String latStr = nmea.substring(commaIndex[1] + 1, commaIndex[2]);
+            String latHem = nmea.substring(commaIndex[2] + 1, commaIndex[3]);
+            String lonStr = nmea.substring(commaIndex[3] + 1, commaIndex[4]);
+            String lonHem = nmea.substring(commaIndex[4] + 1, commaIndex[5]);
+            
+            if (latStr.length() > 0 && lonStr.length() > 0) {
+                gpsData.latitude = convertToDecimalDegrees(latStr.toFloat());
+                if (latHem == "S") gpsData.latitude = -gpsData.latitude;
+                
+                gpsData.longitude = convertToDecimalDegrees(lonStr.toFloat());
+                if (lonHem == "W") gpsData.longitude = -gpsData.longitude;
+                
+                gpsData.valid = true;
+                gpsData.lastUpdate = millis();
+            }
+            
+            // Mode indicators - 6-ое поле (определяет качество фикса)
+            String modeStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
+            if (modeStr.length() > 0) {
+                char mode = modeStr[0]; // Первый символ показывает общий режим
+                if (mode == 'N') gpsData.fixQuality = 0;      // No fix
+                else if (mode == 'A') gpsData.fixQuality = 1; // Autonomous GPS
+                else if (mode == 'D') gpsData.fixQuality = 2; // Differential GPS
+                else if (mode == 'R') gpsData.fixQuality = 4; // RTK fixed
+                else if (mode == 'F') gpsData.fixQuality = 5; // RTK float
+                else gpsData.fixQuality = 1; // По умолчанию GPS
             }
             
             // Количество спутников в фиксе - 7-ое поле
@@ -192,6 +218,13 @@ void parseNmeaAccuracy(String nmea) {
             gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats + gpsData.qzss_sats;
         }
     }
+}
+
+// Конвертация из DDMM.MMMM в десятичные градусы
+double convertToDecimalDegrees(double ddmm) {
+    int degrees = (int)(ddmm / 100);
+    double minutes = ddmm - (degrees * 100);
+    return degrees + minutes / 60.0;
 }
 
 String getFixTypeString(int quality) {
