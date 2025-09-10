@@ -57,10 +57,10 @@ struct GPSData {
     double latAccuracy = 999.9;  // Точность по широте
     double lonAccuracy = 999.9;  // Точность по долготе
     double verticalAccuracy = 999.9;
-    int satellites = 0;  // Количество спутников в фиксе из GGA
+    int satellites = 0;  // Количество спутников в фиксе из GNS
     int total_gsa_sats = 0;  // Общий подсчет из GSA сообщений для сравнения
     int gps_sats = 0, glonass_sats = 0, galileo_sats = 0, beidou_sats = 0, qzss_sats = 0;  // Спутники в фиксе по системам
-    int fixQuality = 0;  // Качество фикса из GGA (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float)
+    int fixQuality = 0;  // Качество фикса из GNS (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float, 6-Estimated)
     bool valid = false;
     unsigned long lastUpdate = 0;
     unsigned long lastGsaUpdate = 0;  // Общее время последнего GSA обновления
@@ -118,42 +118,58 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
 // Функция парсинга NMEA для получения точности и спутников
 void parseNmeaAccuracy(String nmea) {
     // Парсим GST для получения точности в метрах
+    // Формат: $--GST,hhmmss.ss,x.x,x.x,x.x,x.x,x.x,x.x,x.x*hh
+    //         Field: 1,        2,  3,  4,  5,  6,  7,  8,  9
     if (nmea.startsWith("$GNGST") || nmea.startsWith("$GPGST")) {
-        int commaIndex[9];
+        int commaIndex[10];
         int commaCount = 0;
-        for (int i = 0; i < nmea.length() && commaCount < 9; i++) {
+        
+        // Находим все запятые
+        for (int i = 0; i < nmea.length() && commaCount < 10; i++) {
             if (nmea[i] == ',') {
                 commaIndex[commaCount++] = i;
             }
         }
+        
+        // GST должен иметь минимум 8 запятых для всех полей точности
         if (commaCount >= 8) {
-            // Поле 6: RMS lat error (север-юг)
-            String latAccStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
-            latAccStr.trim();
-            
-            // Поле 7: RMS lon error (восток-запад)
-            String lonAccStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
-            lonAccStr.trim();
-            
-            // Поле 8: RMS alt error (высота)
-            String altAccStr = nmea.substring(commaIndex[7] + 1, commaIndex[8]);
-            altAccStr.trim();
-            
             bool hasValidAccuracy = false;
             
-            if (latAccStr.length() > 0 && latAccStr.toFloat() > 0.0) {
-                gpsData.latAccuracy = latAccStr.toFloat();
-                hasValidAccuracy = true;
+            // Поле 7: Standard deviation of latitude error (после commaIndex[5])
+            if (commaIndex[6] > commaIndex[5] + 1) {
+                String latAccStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
+                latAccStr.trim();
+                float latAcc = latAccStr.toFloat();
+                if (latAcc > 0.0 && latAcc < 100.0) {  // Фильтруем нереальные значения
+                    gpsData.latAccuracy = latAcc;
+                    hasValidAccuracy = true;
+                }
             }
             
-            if (lonAccStr.length() > 0 && lonAccStr.toFloat() > 0.0) {
-                gpsData.lonAccuracy = lonAccStr.toFloat();
-                hasValidAccuracy = true;
+            // Поле 8: Standard deviation of longitude error (после commaIndex[6])
+            if (commaIndex[7] > commaIndex[6] + 1) {
+                String lonAccStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
+                lonAccStr.trim();
+                float lonAcc = lonAccStr.toFloat();
+                if (lonAcc > 0.0 && lonAcc < 100.0) {  // Фильтруем нереальные значения
+                    gpsData.lonAccuracy = lonAcc;
+                    hasValidAccuracy = true;
+                }
             }
             
-            if (altAccStr.length() > 0 && altAccStr.toFloat() > 0.0) {
-                gpsData.verticalAccuracy = altAccStr.toFloat();
-                hasValidAccuracy = true;
+            // Поле 9: Standard deviation of altitude error (после commaIndex[7])
+            // Ищем конец строки или звездочку (начало контрольной суммы)
+            int endIndex = nmea.indexOf('*', commaIndex[7] + 1);
+            if (endIndex == -1) endIndex = nmea.length();
+            
+            if (endIndex > commaIndex[7] + 1) {
+                String altAccStr = nmea.substring(commaIndex[7] + 1, endIndex);
+                altAccStr.trim();
+                float altAcc = altAccStr.toFloat();
+                if (altAcc > 0.0 && altAcc < 100.0) {  // Фильтруем нереальные значения
+                    gpsData.verticalAccuracy = altAcc;
+                    hasValidAccuracy = true;
+                }
             }
             
             // Обновляем время только если получили валидные данные точности
@@ -163,17 +179,22 @@ void parseNmeaAccuracy(String nmea) {
         }
     }
     
-    
-    // Парсим GNS для получения координат, количества спутников и качества фикса
-    if (nmea.startsWith("$GNGNS") || nmea.startsWith("$GPGNS")) {
+    // Парсим GNS для получения координат, количества спутников и качества фикса (современный мульти-GNSS формат)
+    // Формат: $--GNS,hhmmss.ss,IIII.II,a,yyyyy.yy,a,c--c,xx,x.x,x.x,x.x,x.x,x.x,a,*hh
+    //         Field: 1,        2,       3,4,        5,6,   7, 8, 9, 10, 11, 12, 13,14
+    if (nmea.startsWith("$GNGNS") || nmea.startsWith("$GPGNS") || nmea.startsWith("$GLGNS") || nmea.startsWith("$GAGNS")) {
         int commaIndex[15]; int commaCount = 0;
         for (int i = 0; i < nmea.length() && commaCount < 15; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
-        if (commaCount >= 9) {
-            // Координаты - поля 2-5
+        if (commaCount >= 10) {  // Минимум 10 запятых для валидного GNS
+            // Поле 3: Широта (после commaIndex[1])
+            // Поле 4: Направление широты (после commaIndex[2])
             String latStr = nmea.substring(commaIndex[1] + 1, commaIndex[2]);
             String latHem = nmea.substring(commaIndex[2] + 1, commaIndex[3]);
+            
+            // Поле 5: Долгота (после commaIndex[3])
+            // Поле 6: Направление долготы (после commaIndex[4])
             String lonStr = nmea.substring(commaIndex[3] + 1, commaIndex[4]);
             String lonHem = nmea.substring(commaIndex[4] + 1, commaIndex[5]);
             
@@ -184,51 +205,89 @@ void parseNmeaAccuracy(String nmea) {
                 gpsData.longitude = convertToDecimalDegrees(lonStr.toFloat());
                 if (lonHem == "W") gpsData.longitude = -gpsData.longitude;
                 
-                gpsData.valid = true;
                 gpsData.lastUpdate = millis();
             }
             
-            // Высота - поле 9
-            String altStr = nmea.substring(commaIndex[8] + 1, commaIndex[9]);
-            if (altStr.length() > 0) {
-                gpsData.altitude = altStr.toFloat();
-            }
-            
-            // Mode indicators - 6-ое поле (определяет качество фикса)
+            // Поле 7: Mode indicators (после commaIndex[5])
+            // Переменная длина, первые 3 символа для GPS/GLONASS/Galileo
             String modeStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
             if (modeStr.length() > 0) {
-                char mode = modeStr[0]; // Первый символ показывает общий режим
-                if (mode == 'N') gpsData.fixQuality = 0;      // No fix
-                else if (mode == 'A') gpsData.fixQuality = 1; // Autonomous GPS
-                else if (mode == 'D') gpsData.fixQuality = 2; // Differential GPS
-                else if (mode == 'R') gpsData.fixQuality = 4; // RTK fixed
-                else if (mode == 'F') gpsData.fixQuality = 5; // RTK float
+                // Анализируем все символы режима для разных GNSS систем
+                bool hasValidFix = false;
+                char bestMode = 'N';
+                
+                for (int i = 0; i < modeStr.length() && i < 4; i++) {
+                    char mode = modeStr[i];
+                    if (mode != 'N' && mode != ' ') {
+                        hasValidFix = true;
+                        // Приоритет: R > F > D > P > A > E > остальное
+                        if (mode == 'R' || (bestMode != 'R' && mode == 'F') ||
+                            (bestMode != 'R' && bestMode != 'F' && mode == 'D') ||
+                            (bestMode != 'R' && bestMode != 'F' && bestMode != 'D' && mode == 'P') ||
+                            (bestMode != 'R' && bestMode != 'F' && bestMode != 'D' && bestMode != 'P' && mode == 'A')) {
+                            bestMode = mode;
+                        }
+                    }
+                }
+                
+                // Устанавливаем качество фикса на основе лучшего режима
+                if (bestMode == 'N') gpsData.fixQuality = 0;      // No fix
+                else if (bestMode == 'A') gpsData.fixQuality = 1; // Autonomous
+                else if (bestMode == 'D') gpsData.fixQuality = 2; // Differential
+                else if (bestMode == 'P') gpsData.fixQuality = 3; // High precision
+                else if (bestMode == 'R') gpsData.fixQuality = 4; // RTK Int (fixed)
+                else if (bestMode == 'F') gpsData.fixQuality = 5; // RTK Float
+                else if (bestMode == 'E') gpsData.fixQuality = 6; // Estimated/Dead reckoning
+                else if (bestMode == 'M') gpsData.fixQuality = 1; // Manual (treat as GPS)
+                else if (bestMode == 'S') gpsData.fixQuality = 1; // Simulator (treat as GPS)
                 else gpsData.fixQuality = 1; // По умолчанию GPS
+                
+                gpsData.valid = hasValidFix;
             }
             
-            // Количество спутников в фиксе - 7-ое поле
+            // Поле 8: Количество используемых спутников (после commaIndex[6])
             String satCountStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
             if (satCountStr.length() > 0) {
                 gpsData.satellites = satCountStr.toInt();
             }
+            
+            // Поле 10: Высота антенны над уровнем моря/геоидом (после commaIndex[9])
+            if (commaCount >= 10) {
+                String altStr = nmea.substring(commaIndex[9] + 1, commaIndex[10]);
+                if (altStr.length() > 0) {
+                    gpsData.altitude = altStr.toFloat();
+                }
+            }
+            
+            // Поле 14: Навигационный статус (после commaIndex[13])
+            // S=Safe, C=Caution, U=Unsafe, V=Not valid
+            if (commaCount >= 14) {
+                String statusStr = nmea.substring(commaIndex[13] + 1, 
+                    commaIndex[14] < nmea.length() ? commaIndex[14] : nmea.indexOf('*', commaIndex[13]));
+                if (statusStr == "V" || statusStr == "U") {
+                    gpsData.valid = false;  // Переопределяем если статус не валидный или небезопасный
+                }
+            }
         }
     }
     
-    // Парсим GSA сообщения с полем talker ID (GNGSA, GPGSA, GLGSA, GAGSA, BDGSA)
+    // Парсим GSA сообщения для подсчёта спутников по системам
+    // Формат: $--GSA,a,x,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,x.x,x.x,x.x,h*hh
+    //         Field: 1,2,3,4, 5, 6, 7, 8, 9, 10,11,12,13,14,15,16, 17, 18, 19
     if (nmea.startsWith("$GNGSA") || nmea.startsWith("$GPGSA") || nmea.startsWith("$GLGSA") || 
-        nmea.startsWith("$GAGSA") || nmea.startsWith("$BDGSA")) {
+        nmea.startsWith("$GAGSA") || nmea.startsWith("$BDGSA") || nmea.startsWith("$GQGSA")) {
         // Разбиваем на поля
         int commaIndex[20]; int commaCount = 0;
         for (int i = 0; i < nmea.length() && commaCount < 20; i++) {
             if (nmea[i] == ',') commaIndex[commaCount++] = i;
         }
         
-        if (commaCount >= 14) { // Нужно минимум поля с ID спутников
-            // Подсчитываем непустые ID спутников в полях 3-14
+        if (commaCount >= 14) { // Нужно минимум 14 запятых для полей с ID спутников
+            // Поля 4-15: ID спутников (после commaIndex[2] до commaIndex[13])
             int count = 0;
-            for (int i = 2; i < 14 && i < commaCount; i++) { // поля 3-14 (индексы 2-13)
+            for (int i = 2; i < 14 && i < commaCount; i++) { 
                 String satId = nmea.substring(commaIndex[i] + 1, commaIndex[i + 1]);
-                satId.trim(); // Убираем пробелы
+                satId.trim();
                 if (satId.length() > 0 && !satId.equals("")) {
                     count++;
                 }
@@ -249,28 +308,33 @@ void parseNmeaAccuracy(String nmea) {
             } else if (nmea.startsWith("$BDGSA")) {
                 gpsData.beidou_sats = count;     // BeiDou
                 gpsData.lastBeidouUpdate = currentTime;
+            } else if (nmea.startsWith("$GQGSA")) {
+                gpsData.qzss_sats = count;        // QZSS
+                gpsData.lastQzssUpdate = currentTime;
             } else if (nmea.startsWith("$GNGSA")) {
-                // Для GNGSA используем talker ID
-                if (commaCount >= 17) {
-                    int asteriskPos = nmea.indexOf('*');
-                    int lastComma = nmea.lastIndexOf(',');
-                    String talkerStr = nmea.substring(lastComma + 1, asteriskPos);
-                    int talkerId = talkerStr.toInt();
+                // Для GNGSA используем поле 19 (System ID) после commaIndex[17]
+                if (commaCount >= 18) {
+                    // Поле 19: System ID (1=GPS, 2=GLONASS, 3=Galileo, 4=BeiDou, 5=QZSS)
+                    int asteriskPos = nmea.indexOf('*', commaIndex[17]);
+                    String sysIdStr = nmea.substring(commaIndex[17] + 1, 
+                        asteriskPos != -1 ? asteriskPos : nmea.length());
+                    sysIdStr.trim();
+                    int sysId = sysIdStr.toInt();
                     
-                    if (talkerId == 1) {
+                    if (sysId == 1) {
                         gpsData.gps_sats = count;        // GPS
                         gpsData.lastGpsUpdate = currentTime;
-                    } else if (talkerId == 2) {
-                        gpsData.glonass_sats = count; // GLONASS
+                    } else if (sysId == 2) {
+                        gpsData.glonass_sats = count;    // GLONASS
                         gpsData.lastGlonassUpdate = currentTime;
-                    } else if (talkerId == 3) {
-                        gpsData.galileo_sats = count; // Galileo
+                    } else if (sysId == 3) {
+                        gpsData.galileo_sats = count;    // Galileo
                         gpsData.lastGalileoUpdate = currentTime;
-                    } else if (talkerId == 4) {
-                        gpsData.beidou_sats = count;  // BeiDou
+                    } else if (sysId == 4) {
+                        gpsData.beidou_sats = count;     // BeiDou
                         gpsData.lastBeidouUpdate = currentTime;
-                    } else if (talkerId == 5) {
-                        gpsData.qzss_sats = count;    // QZSS
+                    } else if (sysId == 5) {
+                        gpsData.qzss_sats = count;       // QZSS
                         gpsData.lastQzssUpdate = currentTime;
                     }
                 }
@@ -297,6 +361,7 @@ String getFixTypeString(int quality) {
         case 0: return "NO FIX";
         case 1: return "GPS";
         case 2: return "DGPS";
+        case 3: return "PPS";      // High precision 
         case 4: return "RTK FIXED";
         case 5: return "RTK FLOAT";
         case 6: return "ESTIMATED";
@@ -305,23 +370,37 @@ String getFixTypeString(int quality) {
 }
 
 void updateDisplay() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 1000) return; // Обновляем раз в секунду
-    lastUpdate = millis();
+    static unsigned long lastOledUpdate = 0;
+    static unsigned long lastTftUpdate = 0;
+    static String lastTftContent = "";
+    static String lastOledContent = "";
     
-    // Обновляем OLED дисплей
-    display.clearDisplay();
-    display.setCursor(0,0);
-    display.setTextSize(1);
+    // Проверяем изменение данных для обоих дисплеев
+    String currentContent = String(gpsData.total_gsa_sats) + "|" + String(gpsData.latitude, 6) + "|" + String(gpsData.valid) + "|" + String(gpsData.fixQuality);
+    bool needOledUpdate = (currentContent != lastOledContent) || (millis() - lastOledUpdate >= 5000); // Только при изменении или раз в 5 сек
+    bool needTftUpdate = (millis() - lastTftUpdate >= 3000) || (currentContent != lastTftContent);
     
-    // Обновляем TFT дисплей с кастомной конфигурацией
-    tft->fillScreen(TFT_BLACK);
-    tft->setCursor(0, 0);
-    tft->setTextSize(2);
+    // Обновляем OLED только при реальном изменении данных (минимум мигания)
+    if (needOledUpdate) {
+        lastOledUpdate = millis();
+        lastOledContent = currentContent;
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.setTextSize(1);
+    }
+    
+    if (needTftUpdate) {
+        lastTftUpdate = millis();
+        lastTftContent = currentContent;
+        tft->fillScreen(TFT_BLACK);
+        tft->setCursor(0, 0);
+        tft->setTextSize(2);
+    }
     
     if (gpsData.valid && (millis() - gpsData.lastUpdate < 5000)) {
-        // OLED дисплей
-        display.print("Sats: "); display.print(gpsData.total_gsa_sats);
+        // OLED дисплей (только при обновлении)
+        if (needOledUpdate) {
+            display.print("Sats: "); display.print(gpsData.total_gsa_sats);
         display.print(" Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         display.print("Lat: "); display.println(gpsData.latitude, 6);
         display.print("Lon: "); display.println(gpsData.longitude, 6);
@@ -339,9 +418,11 @@ void updateDisplay() {
             display.print(" Q:"); display.print(gpsData.qzss_sats);
         }
         display.println();
+        }
         
-        // TFT дисплей с цветным форматированием
-        tft->setTextColor(TFT_GREEN);
+        // TFT дисплей с цветным форматированием (только при обновлении)
+        if (needTftUpdate) {
+            tft->setTextColor(TFT_GREEN);
         tft->print("Sats: "); tft->print(gpsData.total_gsa_sats);
         tft->setTextColor(TFT_CYAN);
         tft->print(" Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
@@ -367,10 +448,12 @@ void updateDisplay() {
             tft->print(" Q:"); tft->print(gpsData.qzss_sats);
         }
         tft->println();
+        }
         
     } else {
-        // OLED дисплей
-        display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
+        // OLED дисплей (только при обновлении)
+        if (needOledUpdate) {
+            display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
         if (gpsData.total_gsa_sats > 0) {
             display.print("Sats: "); display.println(gpsData.total_gsa_sats);
             display.print("G:"); display.print(gpsData.gps_sats);
@@ -384,9 +467,11 @@ void updateDisplay() {
         } else {
             display.println("Searching GPS...");
         }
+        }
         
-        // TFT дисплей
-        tft->setTextColor(TFT_ORANGE);
+        // TFT дисплей (только при обновлении)
+        if (needTftUpdate) {
+            tft->setTextColor(TFT_ORANGE);
         tft->print("Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
         if (gpsData.total_gsa_sats > 0) {
             tft->setTextColor(TFT_GREEN);
@@ -404,9 +489,13 @@ void updateDisplay() {
             tft->setTextColor(TFT_BLUE);
             tft->println("Searching GPS...");
         }
+        }
     }
     
-    display.display();
+    // Отображаем OLED только если был обновлен
+    if (needOledUpdate) {
+        display.display();
+    }
 }
 
 void setup() {
@@ -530,8 +619,12 @@ void checkDataTimeouts() {
     // Пересчитываем общий счетчик GSA спутников
     gpsData.total_gsa_sats = gpsData.gps_sats + gpsData.glonass_sats + gpsData.galileo_sats + gpsData.beidou_sats + gpsData.qzss_sats;
     
-    // Сбрасываем данные о точности если GST не обновлялись > 5 секунд ИЛИ нет GPS фикса
-    if (currentTime - gpsData.lastGstUpdate > 5000 || !gpsData.valid || gpsData.fixQuality == 0) {
+    // Сбрасываем данные о точности если GST не обновлялись > 10 секунд И нет GPS фикса
+    // При RTK точность может обновляться реже, поэтому увеличиваем таймаут
+    if ((currentTime - gpsData.lastGstUpdate > 10000 && gpsData.fixQuality < 4) ||  // Обычный GPS - 10 секунд
+        (currentTime - gpsData.lastGstUpdate > 30000 && gpsData.fixQuality >= 4) ||  // RTK режимы - 30 секунд
+        (!gpsData.valid && currentTime - gpsData.lastGstUpdate > 5000) ||           // Нет фикса - 5 секунд
+        gpsData.fixQuality == 0) {                                                   // Совсем нет фикса
         gpsData.latAccuracy = 999.9;
         gpsData.lonAccuracy = 999.9;
         gpsData.verticalAccuracy = 999.9;
