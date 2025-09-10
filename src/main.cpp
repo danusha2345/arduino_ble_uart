@@ -115,60 +115,68 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
     }
 };
 
-// Функция парсинга NMEA для получения точности и спутников
-void parseNmeaAccuracy(String nmea) {
+// Оптимизированная функция парсинга NMEA для получения точности и спутников
+// Использует только операции с C-строками, без объектов String
+void parseNmeaAccuracy(const char* nmea) {
+    // Статический буфер для работы со строкой (thread-safe в однопоточной среде)
+    static char workBuffer[256];
+    
+    // Копируем входную строку в рабочий буфер для безопасного парсинга
+    size_t nmeaLen = strlen(nmea);
+    if (nmeaLen >= sizeof(workBuffer)) {
+        return; // Строка слишком длинная
+    }
+    strcpy(workBuffer, nmea);
+    
     // Парсим GST для получения точности в метрах
     // Формат: $--GST,hhmmss.ss,x.x,x.x,x.x,x.x,x.x,x.x,x.x*hh
     //         Field: 1,        2,  3,  4,  5,  6,  7,  8,  9
-    if (nmea.startsWith("$GNGST") || nmea.startsWith("$GPGST")) {
-        int commaIndex[10];
-        int commaCount = 0;
+    if (strncmp(workBuffer, "$GNGST", 6) == 0 || strncmp(workBuffer, "$GPGST", 6) == 0) {
+        char* fields[10];
+        int fieldCount = 0;
+        char* saveptr;
         
-        // Находим все запятые
-        for (int i = 0; i < nmea.length() && commaCount < 10; i++) {
-            if (nmea[i] == ',') {
-                commaIndex[commaCount++] = i;
-            }
+        // Разбиваем строку на поля по запятым
+        char* token = strtok_r(workBuffer, ",", &saveptr);
+        while (token && fieldCount < 10) {
+            fields[fieldCount++] = token;
+            token = strtok_r(NULL, ",", &saveptr);
         }
         
-        // GST должен иметь минимум 8 запятых для всех полей точности
-        if (commaCount >= 8) {
+        // GST должен иметь минимум 9 полей для всех полей точности
+        if (fieldCount >= 9) {
             bool hasValidAccuracy = false;
             
-            // Поле 7: Standard deviation of latitude error (после commaIndex[5])
-            if (commaIndex[6] > commaIndex[5] + 1) {
-                String latAccStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
-                latAccStr.trim();
-                float latAcc = latAccStr.toFloat();
+            // Поле 7: Standard deviation of latitude error (fields[6])
+            if (fields[6] && strlen(fields[6]) > 0) {
+                float latAcc = atof(fields[6]);
                 if (latAcc > 0.0 && latAcc < 100.0) {  // Фильтруем нереальные значения
                     gpsData.latAccuracy = latAcc;
                     hasValidAccuracy = true;
                 }
             }
             
-            // Поле 8: Standard deviation of longitude error (после commaIndex[6])
-            if (commaIndex[7] > commaIndex[6] + 1) {
-                String lonAccStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
-                lonAccStr.trim();
-                float lonAcc = lonAccStr.toFloat();
+            // Поле 8: Standard deviation of longitude error (fields[7])
+            if (fields[7] && strlen(fields[7]) > 0) {
+                float lonAcc = atof(fields[7]);
                 if (lonAcc > 0.0 && lonAcc < 100.0) {  // Фильтруем нереальные значения
                     gpsData.lonAccuracy = lonAcc;
                     hasValidAccuracy = true;
                 }
             }
             
-            // Поле 9: Standard deviation of altitude error (после commaIndex[7])
-            // Ищем конец строки или звездочку (начало контрольной суммы)
-            int endIndex = nmea.indexOf('*', commaIndex[7] + 1);
-            if (endIndex == -1) endIndex = nmea.length();
-            
-            if (endIndex > commaIndex[7] + 1) {
-                String altAccStr = nmea.substring(commaIndex[7] + 1, endIndex);
-                altAccStr.trim();
-                float altAcc = altAccStr.toFloat();
-                if (altAcc > 0.0 && altAcc < 100.0) {  // Фильтруем нереальные значения
-                    gpsData.verticalAccuracy = altAcc;
-                    hasValidAccuracy = true;
+            // Поле 9: Standard deviation of altitude error (fields[8])
+            if (fields[8] && strlen(fields[8]) > 0) {
+                // Удаляем контрольную сумму если есть
+                char* asterisk = strchr(fields[8], '*');
+                if (asterisk) *asterisk = '\0';
+                
+                if (strlen(fields[8]) > 0) {
+                    float altAcc = atof(fields[8]);
+                    if (altAcc > 0.0 && altAcc < 100.0) {  // Фильтруем нереальные значения
+                        gpsData.verticalAccuracy = altAcc;
+                        hasValidAccuracy = true;
+                    }
                 }
             }
             
@@ -177,47 +185,52 @@ void parseNmeaAccuracy(String nmea) {
                 gpsData.lastGstUpdate = millis();
             }
         }
+        return; // Выходим после обработки GST
     }
     
-    // Парсим GNS для получения координат, количества спутников и качества фикса (современный мульти-GNSS формат)
+    // Парсим GNS для получения координат, количества спутников и качества фикса
     // Формат: $--GNS,hhmmss.ss,IIII.II,a,yyyyy.yy,a,c--c,xx,x.x,x.x,x.x,x.x,x.x,a,*hh
     //         Field: 1,        2,       3,4,        5,6,   7, 8, 9, 10, 11, 12, 13,14
-    if (nmea.startsWith("$GNGNS") || nmea.startsWith("$GPGNS") || nmea.startsWith("$GLGNS") || nmea.startsWith("$GAGNS")) {
-        int commaIndex[15]; int commaCount = 0;
-        for (int i = 0; i < nmea.length() && commaCount < 15; i++) {
-            if (nmea[i] == ',') commaIndex[commaCount++] = i;
+    if (strncmp(workBuffer, "$GNGNS", 6) == 0 || strncmp(workBuffer, "$GPGNS", 6) == 0 || 
+        strncmp(workBuffer, "$GLGNS", 6) == 0 || strncmp(workBuffer, "$GAGNS", 6) == 0) {
+        
+        char* fields[15];
+        int fieldCount = 0;
+        char* saveptr;
+        
+        // Разбиваем строку на поля по запятым
+        char* token = strtok_r(workBuffer, ",", &saveptr);
+        while (token && fieldCount < 15) {
+            fields[fieldCount++] = token;
+            token = strtok_r(NULL, ",", &saveptr);
         }
-        if (commaCount >= 10) {  // Минимум 10 запятых для валидного GNS
-            // Поле 3: Широта (после commaIndex[1])
-            // Поле 4: Направление широты (после commaIndex[2])
-            String latStr = nmea.substring(commaIndex[1] + 1, commaIndex[2]);
-            String latHem = nmea.substring(commaIndex[2] + 1, commaIndex[3]);
-            
-            // Поле 5: Долгота (после commaIndex[3])
-            // Поле 6: Направление долготы (после commaIndex[4])
-            String lonStr = nmea.substring(commaIndex[3] + 1, commaIndex[4]);
-            String lonHem = nmea.substring(commaIndex[4] + 1, commaIndex[5]);
-            
-            if (latStr.length() > 0 && lonStr.length() > 0) {
-                gpsData.latitude = convertToDecimalDegrees(latStr.toFloat());
-                if (latHem == "S") gpsData.latitude = -gpsData.latitude;
-                
-                gpsData.longitude = convertToDecimalDegrees(lonStr.toFloat());
-                if (lonHem == "W") gpsData.longitude = -gpsData.longitude;
-                
+        
+        if (fieldCount >= 11) {  // Минимум 11 полей для валидного GNS
+            // Поле 3: Широта (fields[2])
+            // Поле 4: Направление широты (fields[3])
+            if (fields[2] && fields[3] && strlen(fields[2]) > 0 && strlen(fields[3]) > 0) {
+                double lat = convertToDecimalDegrees(atof(fields[2]));
+                if (fields[3][0] == 'S') lat = -lat;
+                gpsData.latitude = lat;
                 gpsData.lastUpdate = millis();
             }
             
-            // Поле 7: Mode indicators (после commaIndex[5])
-            // Переменная длина, первые 3 символа для GPS/GLONASS/Galileo
-            String modeStr = nmea.substring(commaIndex[5] + 1, commaIndex[6]);
-            if (modeStr.length() > 0) {
-                // Анализируем все символы режима для разных GNSS систем
+            // Поле 5: Долгота (fields[4])
+            // Поле 6: Направление долготы (fields[5])
+            if (fields[4] && fields[5] && strlen(fields[4]) > 0 && strlen(fields[5]) > 0) {
+                double lon = convertToDecimalDegrees(atof(fields[4]));
+                if (fields[5][0] == 'W') lon = -lon;
+                gpsData.longitude = lon;
+            }
+            
+            // Поле 7: Mode indicators (fields[6])
+            if (fields[6] && strlen(fields[6]) > 0) {
                 bool hasValidFix = false;
                 char bestMode = 'N';
                 
-                for (int i = 0; i < modeStr.length() && i < 4; i++) {
-                    char mode = modeStr[i];
+                // Анализируем все символы режима для разных GNSS систем
+                for (int i = 0; i < strlen(fields[6]) && i < 4; i++) {
+                    char mode = fields[6][i];
                     if (mode != 'N' && mode != ' ') {
                         hasValidFix = true;
                         // Приоритет: R > F > D > P > A > E > остальное
@@ -245,50 +258,54 @@ void parseNmeaAccuracy(String nmea) {
                 gpsData.valid = hasValidFix;
             }
             
-            // Поле 8: Количество используемых спутников (после commaIndex[6])
-            String satCountStr = nmea.substring(commaIndex[6] + 1, commaIndex[7]);
-            if (satCountStr.length() > 0) {
-                gpsData.satellites = satCountStr.toInt();
+            // Поле 8: Количество используемых спутников (fields[7])
+            if (fields[7] && strlen(fields[7]) > 0) {
+                gpsData.satellites = atoi(fields[7]);
             }
             
-            // Поле 10: Высота антенны над уровнем моря/геоидом (после commaIndex[9])
-            if (commaCount >= 10) {
-                String altStr = nmea.substring(commaIndex[9] + 1, commaIndex[10]);
-                if (altStr.length() > 0) {
-                    gpsData.altitude = altStr.toFloat();
-                }
+            // Поле 10: Высота антенны (fields[9])
+            if (fieldCount >= 10 && fields[9] && strlen(fields[9]) > 0) {
+                gpsData.altitude = atof(fields[9]);
             }
             
-            // Поле 14: Навигационный статус (после commaIndex[13])
+            // Поле 14: Навигационный статус (fields[13])
             // S=Safe, C=Caution, U=Unsafe, V=Not valid
-            if (commaCount >= 14) {
-                String statusStr = nmea.substring(commaIndex[13] + 1, 
-                    commaIndex[14] < nmea.length() ? commaIndex[14] : nmea.indexOf('*', commaIndex[13]));
-                if (statusStr == "V" || statusStr == "U") {
+            if (fieldCount >= 14 && fields[13] && strlen(fields[13]) > 0) {
+                // Удаляем контрольную сумму если есть
+                char* asterisk = strchr(fields[13], '*');
+                if (asterisk) *asterisk = '\0';
+                
+                if (fields[13][0] == 'V' || fields[13][0] == 'U') {
                     gpsData.valid = false;  // Переопределяем если статус не валидный или небезопасный
                 }
             }
         }
+        return; // Выходим после обработки GNS
     }
     
     // Парсим GSA сообщения для подсчёта спутников по системам
     // Формат: $--GSA,a,x,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,x.x,x.x,x.x,h*hh
     //         Field: 1,2,3,4, 5, 6, 7, 8, 9, 10,11,12,13,14,15,16, 17, 18, 19
-    if (nmea.startsWith("$GNGSA") || nmea.startsWith("$GPGSA") || nmea.startsWith("$GLGSA") || 
-        nmea.startsWith("$GAGSA") || nmea.startsWith("$BDGSA") || nmea.startsWith("$GQGSA")) {
-        // Разбиваем на поля
-        int commaIndex[20]; int commaCount = 0;
-        for (int i = 0; i < nmea.length() && commaCount < 20; i++) {
-            if (nmea[i] == ',') commaIndex[commaCount++] = i;
+    if (strncmp(workBuffer, "$GNGSA", 6) == 0 || strncmp(workBuffer, "$GPGSA", 6) == 0 || 
+        strncmp(workBuffer, "$GLGSA", 6) == 0 || strncmp(workBuffer, "$GAGSA", 6) == 0 || 
+        strncmp(workBuffer, "$BDGSA", 6) == 0 || strncmp(workBuffer, "$GQGSA", 6) == 0) {
+        
+        char* fields[20];
+        int fieldCount = 0;
+        char* saveptr;
+        
+        // Разбиваем строку на поля по запятым
+        char* token = strtok_r(workBuffer, ",", &saveptr);
+        while (token && fieldCount < 20) {
+            fields[fieldCount++] = token;
+            token = strtok_r(NULL, ",", &saveptr);
         }
         
-        if (commaCount >= 14) { // Нужно минимум 14 запятых для полей с ID спутников
-            // Поля 4-15: ID спутников (после commaIndex[2] до commaIndex[13])
+        if (fieldCount >= 15) { // Нужно минимум 15 полей для ID спутников
+            // Поля 4-15: ID спутников (fields[3] до fields[14])
             int count = 0;
-            for (int i = 2; i < 14 && i < commaCount; i++) { 
-                String satId = nmea.substring(commaIndex[i] + 1, commaIndex[i + 1]);
-                satId.trim();
-                if (satId.length() > 0 && !satId.equals("")) {
+            for (int i = 3; i <= 14 && i < fieldCount; i++) {
+                if (fields[i] && strlen(fields[i]) > 0 && strcmp(fields[i], "") != 0) {
                     count++;
                 }
             }
@@ -296,30 +313,29 @@ void parseNmeaAccuracy(String nmea) {
             unsigned long currentTime = millis();
             
             // Определяем систему по префиксу сообщения
-            if (nmea.startsWith("$GPGSA")) {
+            if (strncmp(workBuffer, "$GPGSA", 6) == 0) {
                 gpsData.gps_sats = count;        // GPS
                 gpsData.lastGpsUpdate = currentTime;
-            } else if (nmea.startsWith("$GLGSA")) {
+            } else if (strncmp(workBuffer, "$GLGSA", 6) == 0) {
                 gpsData.glonass_sats = count;    // GLONASS
                 gpsData.lastGlonassUpdate = currentTime;
-            } else if (nmea.startsWith("$GAGSA")) {
+            } else if (strncmp(workBuffer, "$GAGSA", 6) == 0) {
                 gpsData.galileo_sats = count;    // Galileo
                 gpsData.lastGalileoUpdate = currentTime;
-            } else if (nmea.startsWith("$BDGSA")) {
+            } else if (strncmp(workBuffer, "$BDGSA", 6) == 0) {
                 gpsData.beidou_sats = count;     // BeiDou
                 gpsData.lastBeidouUpdate = currentTime;
-            } else if (nmea.startsWith("$GQGSA")) {
-                gpsData.qzss_sats = count;        // QZSS
+            } else if (strncmp(workBuffer, "$GQGSA", 6) == 0) {
+                gpsData.qzss_sats = count;       // QZSS
                 gpsData.lastQzssUpdate = currentTime;
-            } else if (nmea.startsWith("$GNGSA")) {
-                // Для GNGSA используем поле 19 (System ID) после commaIndex[17]
-                if (commaCount >= 18) {
-                    // Поле 19: System ID (1=GPS, 2=GLONASS, 3=Galileo, 4=BeiDou, 5=QZSS)
-                    int asteriskPos = nmea.indexOf('*', commaIndex[17]);
-                    String sysIdStr = nmea.substring(commaIndex[17] + 1, 
-                        asteriskPos != -1 ? asteriskPos : nmea.length());
-                    sysIdStr.trim();
-                    int sysId = sysIdStr.toInt();
+            } else if (strncmp(workBuffer, "$GNGSA", 6) == 0) {
+                // Для GNGSA используем поле 19 (System ID) fields[18]
+                if (fieldCount >= 19 && fields[18] && strlen(fields[18]) > 0) {
+                    // Удаляем контрольную сумму если есть
+                    char* asterisk = strchr(fields[18], '*');
+                    if (asterisk) *asterisk = '\0';
+                    
+                    int sysId = atoi(fields[18]);
                     
                     if (sysId == 1) {
                         gpsData.gps_sats = count;        // GPS
@@ -816,7 +832,7 @@ void loop() {
         // Собираем NMEA строку для парсинга точности
         nmeaBuffer += c;
         if (c == '\n') {
-            parseNmeaAccuracy(nmeaBuffer);
+            parseNmeaAccuracy(nmeaBuffer.c_str());
             nmeaBuffer = "";
         }
         
