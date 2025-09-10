@@ -369,132 +369,309 @@ String getFixTypeString(int quality) {
     }
 }
 
+// Структура для хранения состояния каждой строки дисплея
+struct DisplayLineState {
+    String text;
+    uint16_t color;    // Для TFT
+    bool needsUpdate;
+    int16_t x, y;      // Позиция строки
+    uint8_t textSize;
+    bool hasAccuracy;  // Для многострочной точности
+};
+
+// Состояние строк для OLED и TFT дисплеев
+static DisplayLineState oledLines[8];  // OLED макс. 8 строк (64px/8px)
+static DisplayLineState tftLines[12];  // TFT макс. 12 строк (240px/20px)
+static bool oledInitialized = false;
+static bool tftInitialized = false;
+static unsigned long lastForceUpdate = 0;
+
+// Константы для позиционирования
+#define OLED_LINE_HEIGHT 8
+#define TFT_LINE_HEIGHT 20  // При размере текста 2
+#define MAX_OLED_LINES 8
+#define MAX_TFT_LINES 12
+
+// Вспомогательные функции для работы с дисплеями
+void initializeDisplayStates() {
+    if (!oledInitialized) {
+        for (int i = 0; i < MAX_OLED_LINES; i++) {
+            oledLines[i].text = "";
+            oledLines[i].color = SSD1306_WHITE;
+            oledLines[i].needsUpdate = true;
+            oledLines[i].x = 0;
+            oledLines[i].y = i * OLED_LINE_HEIGHT;
+            oledLines[i].textSize = 1;
+            oledLines[i].hasAccuracy = false;
+        }
+        oledInitialized = true;
+    }
+    
+    if (!tftInitialized) {
+        for (int i = 0; i < MAX_TFT_LINES; i++) {
+            tftLines[i].text = "";
+            tftLines[i].color = TFT_WHITE;
+            tftLines[i].needsUpdate = true;
+            tftLines[i].x = 0;
+            tftLines[i].y = i * TFT_LINE_HEIGHT;
+            tftLines[i].textSize = 2;
+            tftLines[i].hasAccuracy = false;
+        }
+        tftInitialized = true;
+    }
+}
+
+void clearDisplayLine(int lineNum, bool isOled) {
+    if (isOled && lineNum < MAX_OLED_LINES) {
+        // Очищаем конкретную область строки в OLED
+        display.fillRect(0, oledLines[lineNum].y, SCREEN_WIDTH, OLED_LINE_HEIGHT, SSD1306_BLACK);
+    } else if (!isOled && lineNum < MAX_TFT_LINES) {
+        // Очищаем конкретную область строки в TFT
+        tft->fillRect(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
+    }
+}
+
+bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bool isOled) {
+    DisplayLineState* lines = isOled ? oledLines : tftLines;
+    int maxLines = isOled ? MAX_OLED_LINES : MAX_TFT_LINES;
+    
+    if (lineNum >= maxLines) return false;
+    
+    // Проверяем, нужно ли обновление
+    bool needsUpdate = (lines[lineNum].text != newText) || 
+                       (lines[lineNum].color != newColor) ||
+                       lines[lineNum].needsUpdate;
+    
+    if (needsUpdate) {
+        // Очищаем старую строку
+        clearDisplayLine(lineNum, isOled);
+        
+        // Обновляем состояние
+        lines[lineNum].text = newText;
+        lines[lineNum].color = newColor;
+        lines[lineNum].needsUpdate = false;
+        
+        // Выводим новый текст
+        if (isOled) {
+            display.setCursor(lines[lineNum].x, lines[lineNum].y);
+            display.setTextSize(lines[lineNum].textSize);
+            display.setTextColor(lines[lineNum].color);
+            display.print(newText);
+        } else {
+            tft->setCursor(lines[lineNum].x, lines[lineNum].y);
+            tft->setTextSize(lines[lineNum].textSize);
+            tft->setTextColor(lines[lineNum].color);
+            tft->print(newText);
+        }
+        
+        return true; // Строка была обновлена
+    }
+    
+    return false; // Обновление не требовалось
+}
+
+String formatSatelliteString() {
+    String satStr = "G:" + String(gpsData.gps_sats) + 
+                   " R:" + String(gpsData.glonass_sats) +
+                   " E:" + String(gpsData.galileo_sats) +
+                   " B:" + String(gpsData.beidou_sats);
+    
+    if (gpsData.qzss_sats > 0) {
+        satStr += " Q:" + String(gpsData.qzss_sats);
+    }
+    
+    return satStr;
+}
+
+String formatAccuracyString(int lineType) {
+    if (gpsData.latAccuracy >= 99.9 && gpsData.lonAccuracy >= 99.9) {
+        return ""; // Нет данных о точности
+    }
+    
+    if (lineType == 1) { // Первая строка точности
+        return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
+    } else { // Вторая строка точности
+        return "H:" + String(gpsData.verticalAccuracy, 1) + "m";
+    }
+}
+
 void updateDisplay() {
     static unsigned long lastOledUpdate = 0;
     static unsigned long lastTftUpdate = 0;
-    static String lastTftContent = "";
-    static String lastOledContent = "";
     
-    // Проверяем изменение данных для обоих дисплеев
-    String currentContent = String(gpsData.total_gsa_sats) + "|" + String(gpsData.latitude, 6) + "|" + String(gpsData.valid) + "|" + String(gpsData.fixQuality);
-    bool needOledUpdate = (currentContent != lastOledContent) || (millis() - lastOledUpdate >= 5000); // Только при изменении или раз в 5 сек
-    bool needTftUpdate = (millis() - lastTftUpdate >= 3000) || (currentContent != lastTftContent);
+    // Инициализируем состояния дисплеев при первом вызове
+    initializeDisplayStates();
     
-    // Обновляем OLED только при реальном изменении данных (минимум мигания)
-    if (needOledUpdate) {
-        lastOledUpdate = millis();
-        lastOledContent = currentContent;
-        display.clearDisplay();
-        display.setCursor(0,0);
-        display.setTextSize(1);
+    // Проверяем, нужно ли принудительное обновление (раз в 30 секунд)
+    bool forceUpdate = (millis() - lastForceUpdate > 30000);
+    if (forceUpdate) {
+        lastForceUpdate = millis();
+        // Помечаем все строки для обновления
+        for (int i = 0; i < MAX_OLED_LINES; i++) oledLines[i].needsUpdate = true;
+        for (int i = 0; i < MAX_TFT_LINES; i++) tftLines[i].needsUpdate = true;
     }
     
-    if (needTftUpdate) {
-        lastTftUpdate = millis();
-        lastTftContent = currentContent;
-        tft->fillScreen(TFT_BLACK);
-        tft->setCursor(0, 0);
-        tft->setTextSize(2);
-    }
+    // Проверяем частоту обновления
+    bool canUpdateOled = (millis() - lastOledUpdate > 500) || forceUpdate; // OLED: 2 FPS
+    bool canUpdateTft = (millis() - lastTftUpdate > 333) || forceUpdate;   // TFT: 3 FPS
+    
+    bool oledUpdated = false;
+    bool tftUpdated = false;
     
     if (gpsData.valid && (millis() - gpsData.lastUpdate < 5000)) {
-        // OLED дисплей (только при обновлении)
-        if (needOledUpdate) {
-            display.print("Sats: "); display.print(gpsData.total_gsa_sats);
-        display.print(" Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
-        display.print("Lat: "); display.println(gpsData.latitude, 6);
-        display.print("Lon: "); display.println(gpsData.longitude, 6);
-        display.print("Alt: "); display.print(gpsData.altitude, 1); display.println("m");
-        if (gpsData.latAccuracy < 99.9 || gpsData.lonAccuracy < 99.9) {
-            display.print("N/S:"); display.print(gpsData.latAccuracy, 1);
-            display.print(" E/W:"); display.print(gpsData.lonAccuracy, 1); display.println("m");
-            display.print("H:"); display.print(gpsData.verticalAccuracy, 1); display.println("m");
+        // GPS валиден - отображаем полные данные
+        
+        // Строка 0: Спутники и тип фикса
+        String line0 = "Sats: " + String(gpsData.total_gsa_sats) + " Fix: " + getFixTypeString(gpsData.fixQuality);
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(0, line0, SSD1306_WHITE, true);
         }
-        display.print("G:"); display.print(gpsData.gps_sats);
-        display.print(" R:"); display.print(gpsData.glonass_sats);
-        display.print(" E:"); display.print(gpsData.galileo_sats);
-        display.print(" B:"); display.print(gpsData.beidou_sats);
-        if (gpsData.qzss_sats > 0) {
-            display.print(" Q:"); display.print(gpsData.qzss_sats);
-        }
-        display.println();
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(0, line0, TFT_GREEN, false);
         }
         
-        // TFT дисплей с цветным форматированием (только при обновлении)
-        if (needTftUpdate) {
-            tft->setTextColor(TFT_GREEN);
-        tft->print("Sats: "); tft->print(gpsData.total_gsa_sats);
-        tft->setTextColor(TFT_CYAN);
-        tft->print(" Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
-        tft->setTextColor(TFT_WHITE);
-        tft->print("Lat: "); tft->println(gpsData.latitude, 6);
-        tft->print("Lon: "); tft->println(gpsData.longitude, 6);
-        tft->setTextColor(TFT_YELLOW);
-        tft->print("Alt: "); tft->print(gpsData.altitude, 1); tft->println("m");
-        
-        if (gpsData.latAccuracy < 99.9 || gpsData.lonAccuracy < 99.9) {
-            tft->setTextColor(TFT_MAGENTA);
-            tft->print("N/S: "); tft->print(gpsData.latAccuracy, 1);
-            tft->print(" E/W: "); tft->print(gpsData.lonAccuracy, 1); tft->println("m");
-            tft->print("H: "); tft->print(gpsData.verticalAccuracy, 1); tft->println("m");
+        // Строка 1: Широта
+        String line1 = "Lat: " + String(gpsData.latitude, 6);
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(1, line1, SSD1306_WHITE, true);
+        }
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(1, line1, TFT_WHITE, false);
         }
         
-        tft->setTextColor(TFT_WHITE);
-        tft->print("G:"); tft->print(gpsData.gps_sats);
-        tft->print(" R:"); tft->print(gpsData.glonass_sats);
-        tft->print(" E:"); tft->print(gpsData.galileo_sats);
-        tft->print(" B:"); tft->print(gpsData.beidou_sats);
-        if (gpsData.qzss_sats > 0) {
-            tft->print(" Q:"); tft->print(gpsData.qzss_sats);
+        // Строка 2: Долгота
+        String line2 = "Lon: " + String(gpsData.longitude, 6);
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(2, line2, SSD1306_WHITE, true);
         }
-        tft->println();
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(2, line2, TFT_WHITE, false);
+        }
+        
+        // Строка 3: Высота
+        String line3 = "Alt: " + String(gpsData.altitude, 1) + "m";
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(3, line3, SSD1306_WHITE, true);
+        }
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(3, line3, TFT_YELLOW, false);
+        }
+        
+        // Строки точности (если доступны)
+        int nextLine = 4;
+        String accLine1 = formatAccuracyString(1);
+        String accLine2 = formatAccuracyString(2);
+        
+        if (accLine1.length() > 0) {
+            if (canUpdateOled) {
+                oledUpdated |= updateDisplayLine(nextLine, accLine1, SSD1306_WHITE, true);
+            }
+            if (canUpdateTft) {
+                tftUpdated |= updateDisplayLine(nextLine, accLine1, TFT_MAGENTA, false);
+            }
+            nextLine++;
+            
+            if (accLine2.length() > 0) {
+                if (canUpdateOled) {
+                    oledUpdated |= updateDisplayLine(nextLine, accLine2, SSD1306_WHITE, true);
+                }
+                if (canUpdateTft) {
+                    tftUpdated |= updateDisplayLine(nextLine, accLine2, TFT_MAGENTA, false);
+                }
+                nextLine++;
+            }
+        }
+        
+        // Строка спутников по системам
+        String satLine = formatSatelliteString();
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(nextLine, satLine, SSD1306_WHITE, true);
+        }
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(nextLine, satLine, TFT_WHITE, false);
+        }
+        nextLine++;
+        
+        // Очищаем неиспользуемые строки
+        for (int i = nextLine; i < MAX_OLED_LINES; i++) {
+            if (canUpdateOled && oledLines[i].text.length() > 0) {
+                oledUpdated |= updateDisplayLine(i, "", SSD1306_WHITE, true);
+            }
+        }
+        for (int i = nextLine; i < MAX_TFT_LINES; i++) {
+            if (canUpdateTft && tftLines[i].text.length() > 0) {
+                tftUpdated |= updateDisplayLine(i, "", TFT_WHITE, false);
+            }
         }
         
     } else {
-        // OLED дисплей (только при обновлении)
-        if (needOledUpdate) {
-            display.print("Fix: "); display.println(getFixTypeString(gpsData.fixQuality));
-        if (gpsData.total_gsa_sats > 0) {
-            display.print("Sats: "); display.println(gpsData.total_gsa_sats);
-            display.print("G:"); display.print(gpsData.gps_sats);
-            display.print(" R:"); display.print(gpsData.glonass_sats);
-            display.print(" E:"); display.print(gpsData.galileo_sats);
-            display.print(" B:"); display.print(gpsData.beidou_sats);
-            if (gpsData.qzss_sats > 0) {
-                display.print(" Q:"); display.print(gpsData.qzss_sats);
-            }
-            display.println();
-        } else {
-            display.println("Searching GPS...");
+        // GPS не валиден - отображаем статус поиска
+        
+        // Строка 0: Тип фикса
+        String line0 = "Fix: " + getFixTypeString(gpsData.fixQuality);
+        if (canUpdateOled) {
+            oledUpdated |= updateDisplayLine(0, line0, SSD1306_WHITE, true);
         }
+        if (canUpdateTft) {
+            tftUpdated |= updateDisplayLine(0, line0, TFT_ORANGE, false);
         }
         
-        // TFT дисплей (только при обновлении)
-        if (needTftUpdate) {
-            tft->setTextColor(TFT_ORANGE);
-        tft->print("Fix: "); tft->println(getFixTypeString(gpsData.fixQuality));
+        int nextLine = 1;
+        
         if (gpsData.total_gsa_sats > 0) {
-            tft->setTextColor(TFT_GREEN);
-            tft->print("Sats: "); tft->println(gpsData.total_gsa_sats);
-            tft->setTextColor(TFT_WHITE);
-            tft->print("G:"); tft->print(gpsData.gps_sats);
-            tft->print(" R:"); tft->print(gpsData.glonass_sats);
-            tft->print(" E:"); tft->print(gpsData.galileo_sats);
-            tft->print(" B:"); tft->print(gpsData.beidou_sats);
-            if (gpsData.qzss_sats > 0) {
-                tft->print(" Q:"); tft->print(gpsData.qzss_sats);
+            // Строка 1: Количество спутников
+            String line1 = "Sats: " + String(gpsData.total_gsa_sats);
+            if (canUpdateOled) {
+                oledUpdated |= updateDisplayLine(nextLine, line1, SSD1306_WHITE, true);
             }
-            tft->println();
+            if (canUpdateTft) {
+                tftUpdated |= updateDisplayLine(nextLine, line1, TFT_GREEN, false);
+            }
+            nextLine++;
+            
+            // Строка 2: Спутники по системам
+            String satLine = formatSatelliteString();
+            if (canUpdateOled) {
+                oledUpdated |= updateDisplayLine(nextLine, satLine, SSD1306_WHITE, true);
+            }
+            if (canUpdateTft) {
+                tftUpdated |= updateDisplayLine(nextLine, satLine, TFT_WHITE, false);
+            }
+            nextLine++;
         } else {
-            tft->setTextColor(TFT_BLUE);
-            tft->println("Searching GPS...");
+            // Строка 1: Статус поиска
+            String line1 = "Searching GPS...";
+            if (canUpdateOled) {
+                oledUpdated |= updateDisplayLine(nextLine, line1, SSD1306_WHITE, true);
+            }
+            if (canUpdateTft) {
+                tftUpdated |= updateDisplayLine(nextLine, line1, TFT_BLUE, false);
+            }
+            nextLine++;
         }
+        
+        // Очищаем неиспользуемые строки
+        for (int i = nextLine; i < MAX_OLED_LINES; i++) {
+            if (canUpdateOled && oledLines[i].text.length() > 0) {
+                oledUpdated |= updateDisplayLine(i, "", SSD1306_WHITE, true);
+            }
+        }
+        for (int i = nextLine; i < MAX_TFT_LINES; i++) {
+            if (canUpdateTft && tftLines[i].text.length() > 0) {
+                tftUpdated |= updateDisplayLine(i, "", TFT_WHITE, false);
+            }
         }
     }
     
-    // Отображаем OLED только если был обновлен
-    if (needOledUpdate) {
+    // Обновляем дисплей только если были изменения
+    if (oledUpdated && canUpdateOled) {
         display.display();
+        lastOledUpdate = millis();
+    }
+    
+    // TFT не требует дополнительного вызова display(), обновления происходят сразу
+    if (tftUpdated && canUpdateTft) {
+        lastTftUpdate = millis();
     }
 }
 
