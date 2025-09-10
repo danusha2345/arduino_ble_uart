@@ -74,10 +74,148 @@ String nmeaBuffer = "";
 // Объявления функций
 double convertToDecimalDegrees(double ddmm);
 
-// Буфер для быстрой BLE передачи
-uint8_t bleBuffer[512];
-int bleBufferPos = 0;
-unsigned long lastBleFlush = 0;
+// ==============================================
+// RING BUFFER IMPLEMENTATION FOR BLE DATA
+// ==============================================
+
+#define RING_BUFFER_SIZE 2048
+
+struct RingBuffer {
+    uint8_t data[RING_BUFFER_SIZE];
+    volatile size_t head;      // Индекс для записи (производитель)
+    volatile size_t tail;      // Индекс для чтения (потребитель)
+    volatile bool overflow;    // Флаг переполнения буфера
+    
+    RingBuffer() : head(0), tail(0), overflow(false) {}
+    
+    // Запись данных в кольцевой буфер (thread-safe)
+    size_t write(const uint8_t* src, size_t len) {
+        if (!src || len == 0) return 0;
+        
+        size_t written = 0;
+        
+        // Отключаем прерывания для атомарности операций
+        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+        portENTER_CRITICAL(&mux);
+        
+        for (size_t i = 0; i < len; i++) {
+            size_t next_head = (head + 1) % RING_BUFFER_SIZE;
+            
+            if (next_head == tail) {
+                // Буфер полон - перезаписываем самые старые данные
+                tail = (tail + 1) % RING_BUFFER_SIZE;
+                overflow = true;
+            }
+            
+            data[head] = src[i];
+            head = next_head;
+            written++;
+        }
+        
+        portEXIT_CRITICAL(&mux);
+        return written;
+    }
+    
+    // Чтение данных из кольцевого буфера (thread-safe)
+    size_t read(uint8_t* dest, size_t maxLen) {
+        if (!dest || maxLen == 0) return 0;
+        
+        size_t bytesRead = 0;
+        
+        // Отключаем прерывания для атомарности операций
+        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+        portENTER_CRITICAL(&mux);
+        
+        while (tail != head && bytesRead < maxLen) {
+            dest[bytesRead] = data[tail];
+            tail = (tail + 1) % RING_BUFFER_SIZE;
+            bytesRead++;
+        }
+        
+        // Сбрасываем флаг переполнения после чтения
+        if (overflow && bytesRead > 0) {
+            overflow = false;
+        }
+        
+        portEXIT_CRITICAL(&mux);
+        return bytesRead;
+    }
+    
+    // Получить количество доступных для чтения байт
+    size_t available() const {
+        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+        portENTER_CRITICAL(&mux);
+        
+        size_t avail;
+        if (head >= tail) {
+            avail = head - tail;
+        } else {
+            avail = RING_BUFFER_SIZE - tail + head;
+        }
+        
+        portEXIT_CRITICAL(&mux);
+        return avail;
+    }
+    
+    // Получить количество свободного места в байтах
+    size_t freeSpace() const {
+        return RING_BUFFER_SIZE - available() - 1; // -1 для различения полного/пустого буфера
+    }
+    
+    // Проверить, был ли переполнен буфер
+    bool hasOverflowed() const {
+        return overflow;
+    }
+    
+    // Очистить буфер
+    void clear() {
+        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+        portENTER_CRITICAL(&mux);
+        
+        head = 0;
+        tail = 0;
+        overflow = false;
+        
+        portEXIT_CRITICAL(&mux);
+    }
+    
+    // Получить размер буфера
+    size_t capacity() const {
+        return RING_BUFFER_SIZE - 1; // -1 из-за алгоритма различения полный/пустой
+    }
+};
+
+// Глобальный экземпляр кольцевого буфера для BLE данных
+static RingBuffer bleRingBuffer;
+
+// Временный буфер для чтения из кольцевого буфера
+static uint8_t bleTempBuffer[512]; // Оптимальный размер для BLE пакетов
+static unsigned long lastBleFlush = 0;
+
+// Вспомогательные функции для работы с кольцевым буфером
+inline size_t writeToRingBuffer(const uint8_t* data, size_t len) {
+    return bleRingBuffer.write(data, len);
+}
+
+inline size_t readFromRingBuffer(uint8_t* data, size_t maxLen) {
+    return bleRingBuffer.read(data, maxLen);
+}
+
+inline size_t getRingBufferAvailable() {
+    return bleRingBuffer.available();
+}
+
+inline size_t getRingBufferFree() {
+    return bleRingBuffer.freeSpace();
+}
+
+inline bool getRingBufferOverflow() {
+    return bleRingBuffer.hasOverflowed();
+}
+
+inline void clearRingBuffer() {
+    bleRingBuffer.clear();
+}
 
 // UUIDs для Nordic UART Service (NUS)
 #define SERVICE_UUID        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -98,6 +236,9 @@ class ServerCallbacks: public NimBLEServerCallbacks {
     void onDisconnect(NimBLEServer* pServer) {
         deviceConnected = false;
         Serial.println("Client disconnected");
+        // Очищаем кольцевой буфер при отключении
+        clearRingBuffer();
+        Serial.println("Ring buffer cleared");
         // Перезапускаем advertising, чтобы устройство снова было видно
         NimBLEDevice::startAdvertising();
     }
@@ -787,6 +928,11 @@ void setup() {
     pAdvertising->setMaxPreferred(0x06); // 7.5ms - фиксированная скорость
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
+    
+    // Информация о кольцевом буфере
+    Serial.printf("Ring buffer initialized: %d bytes capacity\n", bleRingBuffer.capacity());
+    Serial.printf("Ring buffer available: %d bytes\n", getRingBufferAvailable());
+    Serial.printf("Ring buffer free: %d bytes\n", getRingBufferFree());
 }
 
 void checkDataTimeouts() {
@@ -825,47 +971,81 @@ void checkDataTimeouts() {
 }
 
 void loop() {
-    // Читаем и парсим GPS данные
-    while (SerialPort.available()) {
-        char c = SerialPort.read();
+    // Оптимизированное чтение и обработка GPS данных
+    static uint8_t uartReadBuffer[256]; // Буфер для пакетного чтения UART
+    
+    int bytesAvailable = SerialPort.available();
+    if (bytesAvailable > 0) {
+        // Читаем данные пакетами для лучшей производительности
+        int bytesToRead = (bytesAvailable > 256) ? 256 : bytesAvailable;
+        int bytesRead = SerialPort.readBytes(uartReadBuffer, bytesToRead);
         
-        // Собираем NMEA строку для парсинга точности
-        nmeaBuffer += c;
-        if (c == '\n') {
-            parseNmeaAccuracy(nmeaBuffer.c_str());
-            nmeaBuffer = "";
+        // Записываем весь пакет в кольцевой буфер одной операцией
+        if (deviceConnected && bytesRead > 0) {
+            writeToRingBuffer(uartReadBuffer, bytesRead);
         }
         
-        // Парсим GPS данные через TinyGPS++
-        if (gps.encode(c)) {
-            if (gps.location.isValid()) {
-                gpsData.latitude = gps.location.lat();
-                gpsData.longitude = gps.location.lng();
-                gpsData.valid = true;
-                gpsData.lastUpdate = millis();
-            }
-        }
-        
-        // Буферизуем данные для BLE
-        if (deviceConnected) {
-            bleBuffer[bleBufferPos++] = c;
+        // Обрабатываем каждый байт для парсинга GPS и NMEA
+        for (int i = 0; i < bytesRead; i++) {
+            char c = uartReadBuffer[i];
             
-            // Отправляем полные пакеты или по таймеру
-            if (bleBufferPos >= 500 || (bleBufferPos > 0 && millis() - lastBleFlush > 20)) {
-                pTxCharacteristic->setValue(bleBuffer, bleBufferPos);
-                pTxCharacteristic->notify();
-                bleBufferPos = 0;
-                lastBleFlush = millis();
+            // Собираем NMEA строку для парсинга точности
+            nmeaBuffer += c;
+            if (c == '\n') {
+                parseNmeaAccuracy(nmeaBuffer.c_str());
+                nmeaBuffer = "";
+            }
+            
+            // Парсим GPS данные через TinyGPS++
+            if (gps.encode(c)) {
+                if (gps.location.isValid()) {
+                    gpsData.latitude = gps.location.lat();
+                    gpsData.longitude = gps.location.lng();
+                    gpsData.valid = true;
+                    gpsData.lastUpdate = millis();
+                }
             }
         }
     }
 
-    // Принудительно отправляем оставшиеся BLE данные по таймеру
-    if (deviceConnected && bleBufferPos > 0 && millis() - lastBleFlush > 50) {
-        pTxCharacteristic->setValue(bleBuffer, bleBufferPos);
-        pTxCharacteristic->notify();
-        bleBufferPos = 0;
-        lastBleFlush = millis();
+    // Отправляем данные из кольцевого буфера через BLE
+    if (deviceConnected) {
+        size_t available = getRingBufferAvailable();
+        
+        // Условия для отправки данных:
+        // 1. Буфер содержит >= 500 байт (почти полный BLE пакет)
+        // 2. Есть данные и прошло > 20мс с последней отправки (для уменьшения задержки)
+        // 3. Принудительная отправка через 50мс если есть любые данные
+        if (available > 0) {
+            bool shouldSend = false;
+            unsigned long currentTime = millis();
+            
+            if (available >= 500) {
+                shouldSend = true; // Отправляем большие пакеты сразу
+            } else if (available > 0 && (currentTime - lastBleFlush > 20)) {
+                shouldSend = true; // Отправляем небольшие пакеты через 20мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 50)) {
+                shouldSend = true; // Принудительная отправка через 50мс
+            }
+            
+            if (shouldSend) {
+                // Читаем оптимальное количество данных (не больше 512 байт)
+                size_t toRead = (available > 512) ? 512 : available;
+                size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
+                
+                if (bytesRead > 0) {
+                    // Отправляем данные через BLE
+                    pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                    pTxCharacteristic->notify();
+                    lastBleFlush = currentTime;
+                    
+                    // Логирование переполнения буфера
+                    if (getRingBufferOverflow()) {
+                        Serial.println("WARNING: Ring buffer overflow occurred!");
+                    }
+                }
+            }
+        }
     }
     
     // Проверяем устаревшие данные
