@@ -1,77 +1,124 @@
-# ESP32-C3 UART to BLE Bridge (Arduino/PlatformIO)
+# ESP32-C3 GPS/GNSS to BLE Bridge with Dual Display
 
-This project turns an **ESP32-C3 Super Mini** microcontroller into a high-speed, secure wireless bridge, forwarding data between its UART (serial) port and a Bluetooth Low Energy (BLE) connection.
-
-This version is built using the **Arduino framework** and the **PlatformIO** build system for maximum stability and ease of use.
-
----
-
-## Описание на русском
-
-Этот проект превращает микроконтроллер **ESP32-C3 Super Mini** в высокоскоростной и безопасный беспроводной мост, который пересылает данные между его UART-портом и Bluetooth Low Energy (BLE) соединением.
-
-Прошивка настроена на максимальную производительность: используется быстрый UART, увеличенный размер BLE-пакета (MTU) и оптимизированные интервалы соединения. Для защиты используется 6-значный PIN-код.
-
----
+Advanced positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays.
 
 ## Features
 
--   **Wireless Bridge**: Transparently sends data from UART to a connected BLE device and vice-versa.
--   **High Speed**: The UART port is configured to a baud rate of **460800**.
--   **Optimized for Performance**:
-    -   Uses a large MTU size (517 bytes) to maximize throughput.
-    -   Sets fast connection intervals (7.5ms - 15ms).
-    -   Disables Wi-Fi/BLE power-saving for minimum latency.
--   **Standard Service**: Implements the Nordic UART Service (NUS) for broad compatibility.
--   **Secure**: Uses a static 6-digit PIN code **`123456`** for pairing.
--   **Efficient BLE Stack**: Uses the `NimBLE-Arduino` library for lower memory usage and better performance.
+### GNSS/GPS Capabilities
+- **Multi-constellation support**: GPS, GLONASS, Galileo, BeiDou, QZSS
+- **RTK support**: Fixed and Float modes with accuracy monitoring
+- **NMEA 0183 parsing**:
+  - GNS: Position, altitude, fix quality
+  - GST: Accuracy metrics (latitude/longitude/altitude standard deviation)
+  - GSA: Satellite details by constellation
+- **Fix modes**: GPS, DGPS, PPS, RTK Fixed, RTK Float, Estimated
+
+### Display Support
+- **OLED I2C Display** (128x64 SSD1306):
+  - Coordinates, altitude, satellites count
+  - Fix type and accuracy in meters
+  - Constellation breakdown
+- **TFT SPI Display** (135x240 ST7789V):
+  - Color-coded information
+  - Larger, more readable format
+
+### BLE Features
+- **Nordic UART Service (NUS)** for universal compatibility
+- **High-speed data transfer**: 460800 baud UART
+- **Optimized performance**:
+  - Large MTU (517 bytes)
+  - Fast connection intervals (7.5-15ms)
+  - Maximum TX power (+9 dBm)
+- **Security**: PIN-based pairing (123456)
 
 ## Hardware Requirements
 
-1.  An **ESP32-C3 Super Mini** board (or a similar ESP32-C3 board).
-2.  A device to communicate with over UART.
+- **ESP32-C3 Super Mini** board
+- **GNSS/GPS module** with UART output (460800 baud)
+- **Optional displays**:
+  - OLED SSD1306 I2C (128x64)
+  - TFT ST7789V SPI (135x240)
 
-### Pinout
+## Pin Configuration
 
-The firmware is configured to use **UART1** for data communication, as UART0 is used for the USB serial monitor.
+### UART (GNSS Data)
+- **GPIO8**: RX (receive from GNSS)
+- **GPIO10**: TX (transmit to GNSS)
 
--   **GPIO5**: UART TX (Transmit from ESP32)
--   **GPIO4**: UART RX (Receive on ESP32)
+### I2C (OLED Display)
+- **GPIO3**: SDA
+- **GPIO4**: SCL
+- **Address**: 0x78 (or 0x3C in 7-bit)
 
-**Important**: Connect your device's `RX` to the ESP32's `TX` (GPIO5) and your device's `TX` to the ESP32's `RX` (GPIO4). You must also connect the `GND` pins of both devices.
+### SPI (TFT Display)
+- **GPIO0**: SCLK (Clock)
+- **GPIO1**: MOSI (Data)
+- **GPIO2**: DC (Data/Command)
+- **GPIO9**: RST (Reset)
+- **GPIO5**: BL (Backlight)
 
-## How to Build and Flash
+## Software Requirements
 
-This project is intended to be built with [PlatformIO](https://platformio.org/).
+- [PlatformIO](https://platformio.org/) IDE
+- Libraries (auto-installed):
+  - NimBLE-Arduino
+  - Adafruit SSD1306
+  - Arduino_GFX (for ST7789V)
+  - TinyGPSPlus
 
-### Using VSCode with the PlatformIO IDE Extension (Recommended)
+## Build and Upload
 
-1.  **Install Visual Studio Code**.
-2.  **Install the PlatformIO IDE extension** from the VSCode marketplace.
-3.  **Open the Project**: In VSCode, go to `File > Open Folder...` and select this project's directory.
-4.  **Build & Upload**:
-    -   Connect your ESP32-C3 board via USB.
-    -   Click the **PlatformIO icon** on the left sidebar.
-    -   Under `Project Tasks`, find your environment (`esp32-c3-devkitm-1`) and click **Upload**.
+### Using PlatformIO CLI
+```bash
+# Build and upload
+pio run --target upload
 
-    PlatformIO will automatically download the necessary libraries, compile the code, and flash it to your device.
+# Just build
+pio run
 
-### Using the PlatformIO CLI
+# Monitor serial output
+pio device monitor
+```
 
-1.  **Install the PlatformIO Core (CLI)**.
-2.  **Open a terminal** and navigate into the project directory.
-3.  **Build & Upload**: Connect your ESP32 board and run the command:
-    ```bash
-    pio run --target upload
-    ```
+### Using VSCode with PlatformIO
+1. Open project folder in VSCode
+2. Wait for PlatformIO to initialize
+3. Click "Upload" button in status bar
 
-## How to Use
+## BLE Connection
 
-1.  Power on the ESP32. It will begin advertising as **"ESP32-BLE-UART"**.
-2.  On your phone or computer, scan for BLE devices.
-3.  Connect to the device. You will be prompted to enter the PIN code: **`123456`**.
-4.  Once connected, any data sent to the ESP32 on GPIO4 will be wirelessly transmitted to your phone/computer. Any data you send from the BLE app will be output on GPIO5.
+### Device Name
+`ESP32-BLE-UART`
 
-Recommended mobile apps:
--   **nRF Connect for Mobile** (Android/iOS)
--   **Serial Bluetooth Terminal** (Android)
+### Service UUIDs
+- **Service**: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+- **RX Characteristic**: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+- **TX Characteristic**: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+
+### PIN Code
+`123456`
+
+## Testing Apps
+
+- **nRF Connect** (Android/iOS) - BLE debugging
+- **Serial Bluetooth Terminal** (Android) - Data monitoring
+- **Any app supporting Nordic UART Service**
+
+## NMEA Data Flow
+
+1. GNSS module sends NMEA sentences via UART (460800 baud)
+2. ESP32-C3 parses GNS, GST, GSA messages
+3. Extracted data displayed on OLED/TFT
+4. Raw NMEA forwarded over BLE to connected device
+
+## Performance Notes
+
+- Display updates: 1-5 seconds (adaptive)
+- BLE latency: <20ms typical
+- UART buffer: 512 bytes
+- Satellite timeout: 5 seconds per constellation
+- RTK accuracy timeout: 30 seconds
+
+## License
+
+MIT License - See LICENSE file for details

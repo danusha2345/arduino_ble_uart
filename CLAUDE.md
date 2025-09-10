@@ -4,21 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an ESP32-C3 Bluetooth Low Energy (BLE) to UART bridge project built with Arduino framework and PlatformIO. The firmware creates a transparent wireless bridge between a UART interface and BLE Nordic UART Service (NUS), optimized for high-speed data transfer.
+Advanced ESP32-C3 GPS/GNSS to BLE bridge with real-time positioning data transmission and dual display support. The firmware creates a transparent wireless bridge between GNSS receiver and BLE Nordic UART Service (NUS), with comprehensive NMEA parsing and accuracy monitoring for RTK applications.
 
 ## Key Architecture Components
 
-- **Hardware Target**: ESP32-C3 Super Mini (configured as `esp32dev` in platformio.ini with `esp32-c3-devkitm-1` board)
-- **BLE Stack**: NimBLE-Arduino library for efficient memory usage and performance
+### Hardware Configuration
+- **MCU**: ESP32-C3 Super Mini (configured as `esp32dev` with `esp32-c3-devkitm-1` board)
+- **BLE Stack**: NimBLE-Arduino library for efficient memory usage
 - **UART Configuration**: 
-  - UART0: USB serial monitor/debug (460800 baud)
-  - UART1: Data communication (RX: GPIO8, TX: GPIO10, 460800 baud)
-- **Security**: PIN-based pairing with 6-digit code (123456)
-- **Performance Optimizations**:
-  - Large MTU (517 bytes) for maximum throughput
-  - Fast connection intervals (7.5ms-15ms)
-  - Disabled WiFi power saving
-  - Maximum BLE TX power (+9 dBm)
+  - UART0: USB serial monitor/debug (115200 baud)
+  - UART1: GNSS data (RX: GPIO8, TX: GPIO10, 460800 baud)
+
+### Display Support
+- **OLED I2C**: 128x64 SSD1306 (SDA: GPIO3, SCL: GPIO4, Address: 0x78)
+- **TFT SPI**: 135x240 ST7789V (SCLK: GPIO0, MOSI: GPIO1, DC: GPIO2, RST: GPIO9, BL: GPIO5)
+
+### GNSS Features
+- **Multi-constellation support**: GPS, GLONASS, Galileo, BeiDou, QZSS
+- **RTK support**: Fixed/Float modes with extended accuracy timeout
+- **NMEA parsing**: GNS (position), GST (accuracy), GSA (satellites)
+- **Accuracy tracking**: Latitude/Longitude/Altitude standard deviation in meters
+
+### BLE Configuration
+- **Service**: Nordic UART Service (NUS)
+- **Security**: PIN pairing (123456)
+- **Performance**: MTU 517 bytes, connection interval 7.5-15ms, TX power +9 dBm
 
 ## Common Development Commands
 
