@@ -850,9 +850,6 @@ void setup() {
         display.clearDisplay();
         display.setTextSize(1);
         display.setTextColor(SSD1306_WHITE);
-        display.setCursor(0,0);
-        display.println("GPS Bridge ESP32-C3");
-        display.println("Waiting for GPS...");
         display.display();
     }
 
@@ -865,11 +862,11 @@ void setup() {
     tft->fillScreen(TFT_BLACK);
     tft->setTextColor(TFT_WHITE);
     tft->setTextSize(2);
-    tft->setCursor(0, 0);
-    tft->println("GPS Bridge ESP32-C3");
-    tft->println("ST7789V TFT Ready");
-    tft->println("Arduino_GFX v1.6.1");
-    tft->println("Waiting for GPS...");
+    
+    // Инициализируем состояния дисплеев для корректной работы частичных обновлений
+    initializeDisplayStates();
+    
+    // НЕ выводим текст при инициализации - пусть updateDisplay() сам управляет экраном
     Serial.println("TFT Display initialized with Arduino_GFX!");
 
     // Запускаем UART1 для передачи данных
