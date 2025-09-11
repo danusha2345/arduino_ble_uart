@@ -431,6 +431,11 @@ void parseNmeaAccuracy(const char* nmea) {
         strncmp(workBuffer, "$GLGSA", 6) == 0 || strncmp(workBuffer, "$GAGSA", 6) == 0 || 
         strncmp(workBuffer, "$BDGSA", 6) == 0 || strncmp(workBuffer, "$GQGSA", 6) == 0) {
         
+        // Сохраняем тип сообщения ДО парсинга, так как strtok_r изменит workBuffer
+        char msgType[7];
+        strncpy(msgType, workBuffer, 6);
+        msgType[6] = '\0';
+        
         char* fields[20];
         int fieldCount = 0;
         char* saveptr;
@@ -442,34 +447,39 @@ void parseNmeaAccuracy(const char* nmea) {
             token = strtok_r(NULL, ",", &saveptr);
         }
         
-        if (fieldCount >= 15) { // Нужно минимум 15 полей для ID спутников
+        if (fieldCount >= 3) { // Нужно минимум 3 поля для начала парсинга
             // Поля 4-15: ID спутников (fields[3] до fields[14])
             int count = 0;
             for (int i = 3; i <= 14 && i < fieldCount; i++) {
-                if (fields[i] && strlen(fields[i]) > 0 && strcmp(fields[i], "") != 0) {
-                    count++;
+                if (fields[i] && strlen(fields[i]) > 0) {
+                    // Простая проверка - если поле не пустое и не содержит только пробелы
+                    int satId = atoi(fields[i]);
+                    if (satId > 0) {
+                        count++;
+                    }
                 }
             }
             
             unsigned long currentTime = millis();
             
+            
             // Определяем систему по префиксу сообщения
-            if (strncmp(workBuffer, "$GPGSA", 6) == 0) {
+            if (strncmp(msgType, "$GPGSA", 6) == 0) {
                 gpsData.gps_sats = count;        // GPS
                 gpsData.lastGpsUpdate = currentTime;
-            } else if (strncmp(workBuffer, "$GLGSA", 6) == 0) {
+            } else if (strncmp(msgType, "$GLGSA", 6) == 0) {
                 gpsData.glonass_sats = count;    // GLONASS
                 gpsData.lastGlonassUpdate = currentTime;
-            } else if (strncmp(workBuffer, "$GAGSA", 6) == 0) {
+            } else if (strncmp(msgType, "$GAGSA", 6) == 0) {
                 gpsData.galileo_sats = count;    // Galileo
                 gpsData.lastGalileoUpdate = currentTime;
-            } else if (strncmp(workBuffer, "$BDGSA", 6) == 0) {
+            } else if (strncmp(msgType, "$BDGSA", 6) == 0) {
                 gpsData.beidou_sats = count;     // BeiDou
                 gpsData.lastBeidouUpdate = currentTime;
-            } else if (strncmp(workBuffer, "$GQGSA", 6) == 0) {
+            } else if (strncmp(msgType, "$GQGSA", 6) == 0) {
                 gpsData.qzss_sats = count;       // QZSS
                 gpsData.lastQzssUpdate = currentTime;
-            } else if (strncmp(workBuffer, "$GNGSA", 6) == 0) {
+            } else if (strncmp(msgType, "$GNGSA", 6) == 0) {
                 // Для GNGSA используем поле 19 (System ID) fields[18]
                 if (fieldCount >= 19 && fields[18] && strlen(fields[18]) > 0) {
                     // Удаляем контрольную сумму если есть
@@ -646,9 +656,19 @@ String formatAccuracyString(int lineType) {
     }
     
     if (lineType == 1) { // Первая строка точности
-        return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
+        // При высокой точности (< 1м) показываем в сантиметрах
+        if (gpsData.latAccuracy < 1.0 && gpsData.lonAccuracy < 1.0) {
+            return "N/S:" + String(gpsData.latAccuracy * 100, 0) + " E/W:" + String(gpsData.lonAccuracy * 100, 0) + "cm";
+        } else {
+            return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
+        }
     } else { // Вторая строка точности
-        return "H:" + String(gpsData.verticalAccuracy, 1) + "m";
+        // При высокой точности (< 1м) показываем в сантиметрах
+        if (gpsData.verticalAccuracy < 1.0) {
+            return "H:" + String(gpsData.verticalAccuracy * 100, 0) + "cm";
+        } else {
+            return "H:" + String(gpsData.verticalAccuracy, 1) + "m";
+        }
     }
 }
 
@@ -679,7 +699,7 @@ void updateDisplay() {
         // GPS валиден - отображаем полные данные
         
         // Строка 0: Спутники и тип фикса
-        String line0 = "Sats: " + String(gpsData.total_gsa_sats) + " Fix: " + getFixTypeString(gpsData.fixQuality);
+        String line0 = "Sats: " + String(gpsData.satellites) + " Fix: " + getFixTypeString(gpsData.fixQuality);
         if (canUpdateOled) {
             oledUpdated |= updateDisplayLine(0, line0, SSD1306_WHITE, true);
         }
@@ -935,20 +955,20 @@ void setup() {
 void checkDataTimeouts() {
     unsigned long currentTime = millis();
     
-    // Сбрасываем данные о спутниках каждой системы индивидуально если не обновлялись > 5 секунд
-    if (currentTime - gpsData.lastGpsUpdate > 5000) {
+    // Сбрасываем данные о спутниках каждой системы индивидуально если не обновлялись > 3 секунд
+    if (currentTime - gpsData.lastGpsUpdate > 3000) {
         gpsData.gps_sats = 0;
     }
-    if (currentTime - gpsData.lastGlonassUpdate > 5000) {
+    if (currentTime - gpsData.lastGlonassUpdate > 3000) {
         gpsData.glonass_sats = 0;
     }
-    if (currentTime - gpsData.lastGalileoUpdate > 5000) {
+    if (currentTime - gpsData.lastGalileoUpdate > 3000) {
         gpsData.galileo_sats = 0;
     }
-    if (currentTime - gpsData.lastBeidouUpdate > 5000) {
+    if (currentTime - gpsData.lastBeidouUpdate > 3000) {
         gpsData.beidou_sats = 0;
     }
-    if (currentTime - gpsData.lastQzssUpdate > 5000) {
+    if (currentTime - gpsData.lastQzssUpdate > 3000) {
         gpsData.qzss_sats = 0;
     }
     
