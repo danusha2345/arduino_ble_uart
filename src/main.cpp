@@ -447,47 +447,49 @@ void parseNmeaAccuracy(const char* nmea) {
             token = strtok_r(NULL, ",", &saveptr);
         }
         
-        if (fieldCount >= 3) { // Нужно минимум 3 поля для начала парсинга
-            // Поля 4-15: ID спутников (fields[3] до fields[14])
-            int count = 0;
-            for (int i = 3; i <= 14 && i < fieldCount; i++) {
-                if (fields[i] && strlen(fields[i]) > 0) {
-                    // Простая проверка - если поле не пустое и не содержит только пробелы
-                    int satId = atoi(fields[i]);
-                    if (satId > 0) {
-                        count++;
+        if (fieldCount >= 15) { // Нужно минимум 15 полей согласно спецификации
+            int count = 0; // Общий счетчик спутников для данного GSA
+            
+            // Проверяем поле 3 (mode 123) - должно быть 2 или 3 для активного фикса
+            if (fields[2] && (fields[2][0] == '2' || fields[2][0] == '3')) {
+                // Поля 4-15: ID спутников (fields[3] до fields[14])
+                for (int i = 3; i <= 14 && i < fieldCount; i++) {
+                    if (fields[i] && strlen(fields[i]) > 0) {
+                        int satId = atoi(fields[i]);
+                        if (satId > 0) {
+                            count++;
+                        }
                     }
                 }
             }
             
             unsigned long currentTime = millis();
             
-            
-            // Определяем систему по префиксу сообщения
+            // Определяем систему по префиксу GSA или System ID для GNGSA
             if (strncmp(msgType, "$GPGSA", 6) == 0) {
-                gpsData.gps_sats = count;        // GPS
+                gpsData.gps_sats = count;        
                 gpsData.lastGpsUpdate = currentTime;
             } else if (strncmp(msgType, "$GLGSA", 6) == 0) {
-                gpsData.glonass_sats = count;    // GLONASS
+                gpsData.glonass_sats = count;    
                 gpsData.lastGlonassUpdate = currentTime;
             } else if (strncmp(msgType, "$GAGSA", 6) == 0) {
-                gpsData.galileo_sats = count;    // Galileo
+                gpsData.galileo_sats = count;    
                 gpsData.lastGalileoUpdate = currentTime;
             } else if (strncmp(msgType, "$BDGSA", 6) == 0) {
-                gpsData.beidou_sats = count;     // BeiDou
+                gpsData.beidou_sats = count;     
                 gpsData.lastBeidouUpdate = currentTime;
             } else if (strncmp(msgType, "$GQGSA", 6) == 0) {
-                gpsData.qzss_sats = count;       // QZSS
+                gpsData.qzss_sats = count;       
                 gpsData.lastQzssUpdate = currentTime;
             } else if (strncmp(msgType, "$GNGSA", 6) == 0) {
-                // Для GNGSA используем поле 19 (System ID) fields[18]
+                // Для GNGSA определяем систему по полю 19 (System ID)
                 if (fieldCount >= 19 && fields[18] && strlen(fields[18]) > 0) {
-                    // Удаляем контрольную сумму если есть
                     char* asterisk = strchr(fields[18], '*');
                     if (asterisk) *asterisk = '\0';
                     
                     int sysId = atoi(fields[18]);
                     
+                    // Присваиваем спутники по System ID согласно Table 7-34
                     if (sysId == 1) {
                         gpsData.gps_sats = count;        // GPS
                         gpsData.lastGpsUpdate = currentTime;
@@ -503,6 +505,9 @@ void parseNmeaAccuracy(const char* nmea) {
                     } else if (sysId == 5) {
                         gpsData.qzss_sats = count;       // QZSS
                         gpsData.lastQzssUpdate = currentTime;
+                    } else if (sysId == 6) {
+                        // NavIC (IRNSS) - можно добавить поддержку если нужно
+                        // gpsData.navic_sats = count;
                     }
                 }
             }
