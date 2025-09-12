@@ -1,3 +1,127 @@
-.pio
-.vscode
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+.clang_complete
+.gcc-flags.json
+.ccls
+
+# Build artifacts
+build/
+dist/
+bin/
+lib/
+*.bin
+*.elf
+*.hex
+*.map
+*.a
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+
+# Arduino IDE
+*.ino.cpp
+*.ino.elf
+*.ino.hex
+*.ino.map
+*.ino.with_bootloader.bin
+*.ino.with_bootloader.hex
+
+# ESP-IDF
+build/
+sdkconfig
+sdkconfig.old
+
+# Logs and debug files
+*.log
+debug.log
+serial_output.txt
+*.pcap
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.#*
+#*#
+
+# OS specific
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE specific
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-*
+*.swp
+*.swo
+
+# Python (if using scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Certificate and key files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Configuration files with secrets
+config.h
+secrets.h
+credentials.h
+*.config
+
+# Flash memory dumps
+*.dump
+*.flash
+flash_*.bin
+
+# Documentation build
+docs/_build/
+
+# Test results
+test_results/
+*.xml
+*.json
+
+# Backup files
+*.backup
+*.old
+
+# Core dumps
+core
+core.*
