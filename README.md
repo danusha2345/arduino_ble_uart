@@ -7,20 +7,23 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
 ### GNSS/GPS Capabilities
 - **Multi-constellation support**: GPS, GLONASS, Galileo, BeiDou, QZSS
 - **RTK support**: Fixed and Float modes with accuracy monitoring
-- **NMEA 0183 parsing**:
-  - GNS: Position, altitude, fix quality
-  - GST: Accuracy metrics (latitude/longitude/altitude standard deviation)
-  - GSA: Satellite details by constellation
+- **Advanced NMEA 0183 parsing** with modular architecture:
+  - **GNS**: Position, altitude, fix quality, total satellite count
+  - **GST**: Accuracy metrics (lat/lon/alt standard deviation in meters)
+  - **GSA**: Used satellites per system with System ID support for GNGSA
+  - **GSV**: Visible satellites per system
+- **Satellite tracking**: Separate visible/used counts per GNSS constellation
+- **Real-time display**: System breakdown (G:9 R:5 E:3 B:2 Q:1)
 - **Fix modes**: GPS, DGPS, PPS, RTK Fixed, RTK Float, Estimated
 
 ### Display Support
 - **OLED I2C Display** (128x64 SSD1306):
-  - Coordinates, altitude, satellites count
-  - Fix type and accuracy in meters
-  - Constellation breakdown
+  - Coordinates, altitude, total satellites used
+  - Fix type and accuracy in meters/centimeters
+  - **GNSS constellation breakdown** (G:X R:Y E:Z B:W Q:V)
 - **TFT SPI Display** (135x240 ST7789V):
-  - Color-coded information
-  - Larger, more readable format
+  - Color-coded information with larger fonts
+  - Same data as OLED with enhanced readability
 
 ### BLE Features
 - **Nordic UART Service (NUS)** for universal compatibility
@@ -107,17 +110,22 @@ pio device monitor
 ## NMEA Data Flow
 
 1. GNSS module sends NMEA sentences via UART (460800 baud)
-2. ESP32-C3 parses GNS, GST, GSA messages
-3. Extracted data displayed on OLED/TFT
+2. ESP32-C3 parses messages with specialized parsers:
+   - **GSV**: Visible satellites per system
+   - **GSA**: Used satellites with System ID mapping for GNGSA
+   - **GNS**: Position, fix quality, total satellite count
+   - **GST**: Coordinate accuracy (standard deviations)
+3. Extracted data displayed on OLED/TFT with constellation breakdown
 4. Raw NMEA forwarded over BLE to connected device
 
 ## Performance Notes
 
 - Display updates: 1-5 seconds (adaptive)
 - BLE latency: <20ms typical
-- UART buffer: 512 bytes
-- Satellite timeout: 5 seconds per constellation
-- RTK accuracy timeout: 30 seconds
+- UART buffer: 2048 bytes (ring buffer)
+- **Satellite timeout**: 10 seconds per constellation
+- **RTK accuracy timeout**: 30 seconds
+- **Modular NMEA parsing**: Efficient field splitting without strtok_r
 
 ## License
 

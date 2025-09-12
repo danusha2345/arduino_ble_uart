@@ -22,8 +22,13 @@ Advanced ESP32-C3 GPS/GNSS to BLE bridge with real-time positioning data transmi
 ### GNSS Features
 - **Multi-constellation support**: GPS, GLONASS, Galileo, BeiDou, QZSS
 - **RTK support**: Fixed/Float modes with extended accuracy timeout
-- **NMEA parsing**: GNS (position), GST (accuracy), GSA (satellites)
-- **Accuracy tracking**: Latitude/Longitude/Altitude standard deviation in meters
+- **Advanced NMEA parsing**: Modular architecture with specialized parsers
+  - GNS: Position, fix quality, total satellite count
+  - GST: Coordinate accuracy (lat/lon/alt standard deviation in meters)
+  - GSA: Used satellites per system with System ID support for GNGSA
+  - GSV: Visible satellites per system
+- **Satellite tracking**: Separate visible/used satellite counts per GNSS system
+- **System breakdown display**: Real-time satellite count by system (G:X R:Y E:Z B:W Q:V)
 
 ### BLE Configuration
 - **Service**: Nordic UART Service (NUS)
@@ -97,6 +102,42 @@ GitHub Actions workflow (`.github/workflows/release.yml`) automatically builds a
 - Upload port is configured for `/dev/ttyACM0` (Linux)
 - Monitor speed matches UART speed: 115200 baud
 - Device advertises as "ESP32-BLE-UART"
+
+## NMEA Parser Architecture
+
+The firmware implements a modular NMEA parsing system with specialized parsers:
+
+### Core Data Structures
+```cpp
+struct SatInfo {
+    int visible = 0;   // Visible satellites (from GSV)
+    int used = 0;      // Used satellites (from GSA)
+    unsigned long lastUpdate = 0;
+};
+
+struct {
+    SatInfo gps, glonass, galileo, beidou, qzss;
+} satData;
+```
+
+### Parser Functions
+- `parseNMEA()`: Universal dispatcher for NMEA messages
+- `parseGSV()`: Parses visible satellites by system (GP/GL/GA/GB/GQ + GSV)
+- `parseGSA()`: Parses used satellites with System ID support for GNGSA messages
+- `parseGST()`: Parses coordinate accuracy data (standard deviations)
+- `parseGNS()`: Parses position, fix quality, and total satellite count
+- `splitFields()`: Efficient NMEA field separator (replaces strtok_r)
+- `checkSatelliteTimeouts()`: Resets stale satellite data (10-second timeout)
+
+### System ID Mapping (GNGSA messages)
+- 1: GPS
+- 2: GLONASS  
+- 3: Galileo
+- 4: BeiDou
+- 5: QZSS
+
+### Display Format
+Satellite counts shown as: `G:9 R:5 E:3 B:2 Q:1` (used satellites per system)
 
 ## Testing and Debugging
 
