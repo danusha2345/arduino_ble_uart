@@ -670,21 +670,40 @@ static String formatCoordLine(const char* label, double value, int maxChars, int
     return best;
 }
 
-// Форматирование времени GPS как HH:MM:SS (UTC). Пустая строка, если нет валидного времени
-static String formatGpsTime() {
-    if (gps.time.isValid()) {
-        char buf[9];
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
-        return String(buf);
-    }
-    return String("");
+// Настройки часового пояса
+static volatile bool tzAuto = true;          // true: вычислять смещение по долготе, false: использовать ручное смещение
+static volatile int  tzOffsetMinutes = 0;    // смещение от UTC в минутах (-720..+840)
+
+// Оценка смещения часового пояса по долготе (грубая, без учёта политических границ и DST)
+static int estimateOffsetMinutesFromLongitude(double lon) {
+    // Округляем к ближайшему часовому поясу с шагом 15° (UTC±14 максимум)
+    int hours = (int)floor((lon + 7.5) / 15.0);
+    if (hours < -12) hours = -12;
+    if (hours > 14) hours = 14;
+    return hours * 60;
+}
+
+// Форматирование локального времени как HH:MM:SS с учётом tzOffsetMinutes
+static String formatLocalTime() {
+    if (!gps.time.isValid()) return String("");
+    long sec = gps.time.hour() * 3600L + gps.time.minute() * 60L + gps.time.second();
+    sec += (long)tzOffsetMinutes * 60L;
+    // Нормализация в пределы суток
+    sec %= 86400L;
+    if (sec < 0) sec += 86400L;
+    int hh = (int)(sec / 3600L);
+    int mm = (int)((sec % 3600L) / 60L);
+    int ss = (int)(sec % 60L);
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hh, mm, ss);
+    return String(buf);
 }
 
 // Форматирование строки высоты с возможным добавлением времени при наличии места
 static String formatAltitudeLine(int maxChars) {
     // Базовый формат с 1 знаком после запятой
     String base = String("Alt: ") + String(gpsData.altitude, 1) + "m";
-    String t = formatGpsTime();
+    String t = formatLocalTime();
     if (t.length() == 0) return base;
 
     // Предпочтительно с пробелом
@@ -1080,6 +1099,10 @@ void loop() {
                     gpsData.longitude = gps.location.lng();
                     gpsData.valid = true;
                     gpsData.lastUpdate = millis();
+                    // Автоматическая коррекция часового пояса по долготе
+                    if (tzAuto) {
+                        tzOffsetMinutes = estimateOffsetMinutesFromLongitude(gpsData.longitude);
+                    }
                 }
             }
         }
