@@ -104,7 +104,12 @@ GitHub Actions workflow (`.github/workflows/release.yml`) automatically builds a
 - Device advertises as "ESP32-BLE-UART_2"
 - TX supports `NOTIFY` + `READ`; notifications only when subscribed (subscription-aware); ring buffer (2048 B) is not drained without subscribers
 - Display lines: OLED ≈21 chars (size 1), TFT ≈20 chars (size 2); Lat/Lon precision 6–8 decimals auto-fit; accuracy <1 m shown in cm with tenths; TFT accuracy labels shrink to `NS:`/`EW:` if needed
-- Altitude line adds local time `HH:MM:SS` if it fits; local time offset estimated from longitude (round(lon/15), clamped −12..+14), DST not applied
+- Altitude line adds local time `HH:MM:SS` if it fits.
+- Time zone handling:
+  - Default: auto offset estimated from longitude (round(lon/15), clamped −12..+14). No DST.
+  - Manual override: set `build_flags = -DTZ_FORCE_OFFSET_MINUTES=<minutes>` in `platformio.ini`.
+    - Example: St. Petersburg/Moscow = `180` (UTC+3); New York standard time = `-300` (UTC−5).
+  - Remove the flag to revert to auto estimation.
 
 ## NMEA Parser Architecture
 

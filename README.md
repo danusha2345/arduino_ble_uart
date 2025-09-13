@@ -128,6 +128,27 @@ pio device monitor -b 460800
 - Time zone: local time shown; auto offset ~ round(longitude/15°), no DST
 - Satellite timeout: 10 s; RTK accuracy timeout: 30 s
 
+## Local Time & Time Zones
+
+- What you see: the altitude line can show local time in `HH:MM:SS`.
+- Default behavior: the firmware estimates time zone from longitude
+  - Offset ≈ round(longitude / 15°) hours, clamped from −12 to +14 hours.
+  - Daylight saving time (DST) is not applied.
+  - Because political time zones don’t strictly follow longitude, the
+    auto‑offset can differ by ±1 hour in some regions.
+- Force a specific time zone offset (recommended if auto is wrong):
+  - Edit `platformio.ini` in your environment block and add:
+    - `build_flags = -DTZ_FORCE_OFFSET_MINUTES=<minutes>`
+  - Examples (minutes from UTC):
+    - St. Petersburg/Moscow: `180`
+    - Berlin (standard time): `60`
+    - Tokyo: `540`
+    - New York (standard time): `-300` (or `-240` for daylight time)
+  - Remove the flag to return to automatic estimation.
+- Notes:
+  - NMEA time is UTC; the firmware only adjusts display time.
+  - No runtime UI yet; if needed, a BLE command/NVS setting can be added.
+
 ## License
 
 MIT License - See LICENSE file for details
