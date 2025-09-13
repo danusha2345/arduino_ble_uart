@@ -741,13 +741,19 @@ void updateDisplay() {
         int nextLine = 4;
         String accLine1 = formatAccuracyString(1);
         String accLine2 = formatAccuracyString(2);
+        // Подгон по ширине для TFT (240px, textSize=2 => ~20 символов)
+        String accLine1Tft = accLine1;
+        if (accLine1Tft.length() > 20) {
+            accLine1Tft.replace("N/S:", "NS:");
+            accLine1Tft.replace("E/W:", "EW:");
+        }
         
         if (accLine1.length() > 0) {
             if (canUpdateOled) {
                 oledUpdated |= updateDisplayLine(nextLine, accLine1, SSD1306_WHITE, true);
             }
             if (canUpdateTft) {
-                tftUpdated |= updateDisplayLine(nextLine, accLine1, TFT_MAGENTA, false);
+                tftUpdated |= updateDisplayLine(nextLine, accLine1Tft, TFT_MAGENTA, false);
             }
             nextLine++;
             
