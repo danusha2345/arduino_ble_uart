@@ -92,6 +92,9 @@ double convertToDecimalDegrees(double ddmm);
 
 #define RING_BUFFER_SIZE 2048
 
+// Общий спинлок для секций кольцевого буфера
+static portMUX_TYPE ringbufMux = portMUX_INITIALIZER_UNLOCKED;
+
 struct RingBuffer {
     uint8_t data[RING_BUFFER_SIZE];
     volatile size_t head;      // Индекс для записи (производитель)
@@ -106,9 +109,8 @@ struct RingBuffer {
         
         size_t written = 0;
         
-        // Отключаем прерывания для атомарности операций
-        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-        portENTER_CRITICAL(&mux);
+        // Критическая секция под общим спинлоком
+        portENTER_CRITICAL(&ringbufMux);
         
         for (size_t i = 0; i < len; i++) {
             size_t next_head = (head + 1) % RING_BUFFER_SIZE;
@@ -124,7 +126,7 @@ struct RingBuffer {
             written++;
         }
         
-        portEXIT_CRITICAL(&mux);
+        portEXIT_CRITICAL(&ringbufMux);
         return written;
     }
     
@@ -134,9 +136,8 @@ struct RingBuffer {
         
         size_t bytesRead = 0;
         
-        // Отключаем прерывания для атомарности операций
-        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-        portENTER_CRITICAL(&mux);
+        // Критическая секция под общим спинлоком
+        portENTER_CRITICAL(&ringbufMux);
         
         while (tail != head && bytesRead < maxLen) {
             dest[bytesRead] = data[tail];
@@ -149,14 +150,13 @@ struct RingBuffer {
             overflow = false;
         }
         
-        portEXIT_CRITICAL(&mux);
+        portEXIT_CRITICAL(&ringbufMux);
         return bytesRead;
     }
     
     // Получить количество доступных для чтения байт
     size_t available() const {
-        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-        portENTER_CRITICAL(&mux);
+        portENTER_CRITICAL(&ringbufMux);
         
         size_t avail;
         if (head >= tail) {
@@ -165,7 +165,7 @@ struct RingBuffer {
             avail = RING_BUFFER_SIZE - tail + head;
         }
         
-        portEXIT_CRITICAL(&mux);
+        portEXIT_CRITICAL(&ringbufMux);
         return avail;
     }
     
@@ -181,14 +181,13 @@ struct RingBuffer {
     
     // Очистить буфер
     void clear() {
-        portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-        portENTER_CRITICAL(&mux);
+        portENTER_CRITICAL(&ringbufMux);
         
         head = 0;
         tail = 0;
         overflow = false;
         
-        portEXIT_CRITICAL(&mux);
+        portEXIT_CRITICAL(&ringbufMux);
     }
     
     // Получить размер буфера
@@ -1017,10 +1016,15 @@ void loop() {
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
                 
                 if (bytesRead > 0) {
-                    // Отправляем данные через BLE
-                    pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                    pTxCharacteristic->notify();
-                    lastBleFlush = currentTime;
+                    // Отправляем данные через BLE (только если есть подписчики)
+                    if (pTxCharacteristic->getSubscribedCount() > 0) {
+                        pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                        pTxCharacteristic->notify();
+                        lastBleFlush = currentTime;
+                    } else {
+                        // Нет подписчиков – пропускаем отправку
+                        // (данные уже считаны из буфера; допускается потеря при отсутствии клиента)
+                    }
                     
                     // Логирование переполнения буфера
                     if (getRingBufferOverflow()) {
