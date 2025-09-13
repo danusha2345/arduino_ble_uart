@@ -65,7 +65,9 @@ struct GPSData {
     double lonAccuracy = 999.9;  // Точность по долготе
     double verticalAccuracy = 999.9;
     int satellites = 0;  // Общее количество спутников в фиксе из GNS
-    int fixQuality = 0;  // Качество фикса из GNS (0-нет, 1-GPS, 2-DGPS, 4-RTK, 5-Float, 6-Estimated)
+    // Качество фикса из GNS (mode indicator):
+    // 0=NO FIX, 1=AUTONOMOUS, 2=DGPS, 3=HIGH PREC, 4=RTK FIXED, 5=RTK FLOAT, 6=ESTIMATED, 7=MANUAL, 8=SIMULATOR
+    int fixQuality = 0;
     bool valid = false;
     unsigned long lastUpdate = 0;
     unsigned long lastGstUpdate = 0;  // Последнее обновление GST данных (точность)
@@ -436,33 +438,49 @@ void parseGNS(const char *nmea) {
         gpsData.longitude = lon;
     }
     
-    // Field 7: Mode indicators
+    // Field 7: Mode indicators (по 1 символу на систему: GPS, GLONASS, Galileo, BDS, QZSS, NavIC)
     if (fields[6] && *fields[6]) {
-        char bestMode = 'N';
-        bool hasValidFix = false;
-        
-        for (int i = 0; fields[6][i] && i < 4; i++) {
-            char mode = fields[6][i];
-            if (mode != 'N' && mode != ' ') {
-                hasValidFix = true;
-                if (mode == 'R' || (bestMode != 'R' && mode == 'F') ||
-                    (bestMode != 'R' && bestMode != 'F' && mode == 'D') ||
-                    (bestMode != 'R' && bestMode != 'F' && bestMode != 'D' && mode == 'P') ||
-                    (bestMode != 'R' && bestMode != 'F' && bestMode != 'D' && bestMode != 'P' && mode == 'A')) {
-                    bestMode = mode;
-                }
+        auto modeRank = [](char m) -> int {
+            switch (m) {
+                case 'R': return 6; // RTK integer (fixed)
+                case 'F': return 5; // RTK float
+                case 'P': return 4; // High precision
+                case 'D': return 3; // Differential
+                case 'A': return 2; // Autonomous
+                case 'M': return 1; // Manual input
+                case 'S': return 0; // Simulator
+                default:  return -1; // N / unknown
             }
+        };
+
+        // Определяем длину поля до запятой или '*', учитываем максимум 6 систем
+        size_t modesLen = 0;
+        while (fields[6][modesLen] && fields[6][modesLen] != ',' && fields[6][modesLen] != '*') modesLen++;
+        if (modesLen > 6) modesLen = 6;
+
+        char bestMode = 'N';
+        int bestRank = -1;
+        bool hasValidFix = false; // Валиден только для A/D/P/F/R
+
+        for (size_t i = 0; i < modesLen; i++) {
+            char mode = fields[6][i];
+            int rank = modeRank(mode);
+            if (mode == 'A' || mode == 'D' || mode == 'P' || mode == 'F' || mode == 'R') hasValidFix = true;
+            if (rank > bestRank) { bestRank = rank; bestMode = mode; }
         }
-        
-        // Set fix quality
-        if (bestMode == 'N') gpsData.fixQuality = 0;
-        else if (bestMode == 'A') gpsData.fixQuality = 1;
-        else if (bestMode == 'D') gpsData.fixQuality = 2;
-        else if (bestMode == 'P') gpsData.fixQuality = 3;
-        else if (bestMode == 'R') gpsData.fixQuality = 4;
-        else if (bestMode == 'F') gpsData.fixQuality = 5;
-        else gpsData.fixQuality = 1;
-        
+
+        // Устанавливаем fixQuality по лучшему режиму
+        switch (bestMode) {
+            case 'A': gpsData.fixQuality = 1; break;
+            case 'D': gpsData.fixQuality = 2; break;
+            case 'P': gpsData.fixQuality = 3; break;
+            case 'R': gpsData.fixQuality = 4; break;
+            case 'F': gpsData.fixQuality = 5; break;
+            case 'M': gpsData.fixQuality = 7; break; // MANUAL
+            case 'S': gpsData.fixQuality = 8; break; // SIMULATOR
+            default:  gpsData.fixQuality = 0; break;  // NO FIX / unknown
+        }
+
         gpsData.valid = hasValidFix;
     }
     
@@ -530,10 +548,12 @@ String getFixTypeString(int quality) {
         case 0: return "NO FIX";
         case 1: return "GPS";
         case 2: return "DGPS";
-        case 3: return "PPS";      // High precision 
+        case 3: return "HIGH PREC"; // High precision (Precise)
         case 4: return "RTK FIXED";
         case 5: return "RTK FLOAT";
-        case 6: return "ESTIMATED";
+        case 6: return "ESTIMATED"; // резерв под возможные источники вне GNS
+        case 7: return "MANUAL";
+        case 8: return "SIM";
         default: return "UNKNOWN";
     }
 }
@@ -1062,8 +1082,9 @@ void checkDataTimeouts() {
     
     // Сбрасываем данные о точности если GST не обновлялись > 10 секунд И нет GPS фикса
     // При RTK точность может обновляться реже, поэтому увеличиваем таймаут
-    if ((currentTime - gpsData.lastGstUpdate > 10000 && gpsData.fixQuality < 4) ||  // Обычный GPS - 10 секунд
-        (currentTime - gpsData.lastGstUpdate > 30000 && gpsData.fixQuality >= 4) ||  // RTK режимы - 30 секунд
+    bool isRtk = (gpsData.fixQuality == 4 || gpsData.fixQuality == 5);
+    if ((currentTime - gpsData.lastGstUpdate > 10000 && !isRtk) ||  // Обычный GPS - 10 секунд
+        (currentTime - gpsData.lastGstUpdate > 30000 && isRtk) ||   // RTK режимы - 30 секунд
         (!gpsData.valid && currentTime - gpsData.lastGstUpdate > 5000) ||           // Нет фикса - 5 секунд
         gpsData.fixQuality == 0) {                                                   // Совсем нет фикса
         gpsData.latAccuracy = 999.9;

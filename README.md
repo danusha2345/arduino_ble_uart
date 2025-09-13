@@ -14,7 +14,7 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
   - **GSV**: Visible satellites per system
 - **Satellite tracking**: Separate visible/used counts per GNSS constellation
 - **Real-time display**: System breakdown (G:9 R:5 E:3 B:2 Q:1)
-- **Fix modes**: GPS, DGPS, PPS, RTK Fixed, RTK Float, Estimated
+- **Fix modes**: GPS, DGPS, High Precision, RTK Fixed, RTK Float, Manual, Simulator
 
 ### Display Support
 - **OLED I2C Display** (128x64 SSD1306):
