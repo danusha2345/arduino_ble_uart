@@ -671,8 +671,13 @@ static String formatCoordLine(const char* label, double value, int maxChars, int
 }
 
 // Настройки часового пояса
-static volatile bool tzAuto = true;          // true: вычислять смещение по долготе, false: использовать ручное смещение
-static volatile int  tzOffsetMinutes = 0;    // смещение от UTC в минутах (-720..+840)
+#ifdef TZ_FORCE_OFFSET_MINUTES
+static volatile bool tzAuto = false;                         // ручной режим
+static volatile int  tzOffsetMinutes = TZ_FORCE_OFFSET_MINUTES; // смещение от UTC в минутах (-720..+840)
+#else
+static volatile bool tzAuto = true;                          // авто по долготе
+static volatile int  tzOffsetMinutes = 0;                    // смещение от UTC в минутах
+#endif
 
 // Оценка смещения часового пояса по долготе (грубая, без учёта политических границ и DST)
 static int estimateOffsetMinutesFromLongitude(double lon) {
@@ -743,7 +748,9 @@ String formatAccuracyString(int lineType) {
             return String("N/S:") + String(gpsData.latAccuracy * 100, 1) + "cm "
                  + "E/W:" + String(gpsData.lonAccuracy * 100, 1) + "cm";
         } else {
-            return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
+            // Метры: добавляем 'm' после обоих значений
+            return String("N/S:") + String(gpsData.latAccuracy, 1) + "m "
+                 + "E/W:" + String(gpsData.lonAccuracy, 1) + "m";
         }
     } else { // Вторая строка точности
         // При высокой точности (< 1м) показываем в сантиметрах с десятыми
