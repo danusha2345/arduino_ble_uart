@@ -660,7 +660,8 @@ String formatAccuracyString(int lineType) {
     if (lineType == 1) { // Первая строка точности
         // При высокой точности (< 1м) показываем в сантиметрах с десятыми
         if (gpsData.latAccuracy < 1.0 && gpsData.lonAccuracy < 1.0) {
-            return "N/S:" + String(gpsData.latAccuracy * 100, 1) + " E/W:" + String(gpsData.lonAccuracy * 100, 1) + "cm";
+            return String("N/S:") + String(gpsData.latAccuracy * 100, 1) + "cm "
+                 + "E/W:" + String(gpsData.lonAccuracy * 100, 1) + "cm";
         } else {
             return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
         }
