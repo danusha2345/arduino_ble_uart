@@ -560,6 +560,9 @@ static unsigned long lastForceUpdate = 0;
 #define TFT_LINE_HEIGHT 20  // При размере текста 2
 #define MAX_OLED_LINES 8
 #define MAX_TFT_LINES 12
+// Максимум символов в строке при текущих размерах шрифта
+#define OLED_MAX_CHARS 21   // 128px / (6px*1)
+#define TFT_MAX_CHARS 20    // 240px / (6px*2)
 
 // Вспомогательные функции для работы с дисплеями
 void initializeDisplayStates() {
@@ -652,6 +655,21 @@ String formatSatelliteString() {
     return satStr;
 }
 
+// Форматирование строки координаты под ограничение количества символов
+static String formatCoordLine(const char* label, double value, int maxChars, int minDecimals = 6, int maxDecimals = 8) {
+    String best = String(label) + String(value, minDecimals);
+    // Увеличиваем число знаков после запятой, пока строка помещается
+    for (int d = minDecimals + 1; d <= maxDecimals; ++d) {
+        String candidate = String(label) + String(value, d);
+        if ((int)candidate.length() <= maxChars) {
+            best = candidate;
+        } else {
+            break;
+        }
+    }
+    return best;
+}
+
 String formatAccuracyString(int lineType) {
     if (gpsData.latAccuracy >= 99.9 && gpsData.lonAccuracy >= 99.9) {
         return ""; // Нет данных о точности
@@ -710,22 +728,24 @@ void updateDisplay() {
             tftUpdated |= updateDisplayLine(0, line0, TFT_GREEN, false);
         }
         
-        // Строка 1: Широта
-        String line1 = "Lat: " + String(gpsData.latitude, 6);
+        // Строка 1: Широта (динамическая точность по оставшемуся месту)
+        String line1_oled = formatCoordLine("Lat: ", gpsData.latitude, OLED_MAX_CHARS);
+        String line1_tft  = formatCoordLine("Lat: ", gpsData.latitude, TFT_MAX_CHARS);
         if (canUpdateOled) {
-            oledUpdated |= updateDisplayLine(1, line1, SSD1306_WHITE, true);
+            oledUpdated |= updateDisplayLine(1, line1_oled, SSD1306_WHITE, true);
         }
         if (canUpdateTft) {
-            tftUpdated |= updateDisplayLine(1, line1, TFT_WHITE, false);
+            tftUpdated |= updateDisplayLine(1, line1_tft, TFT_WHITE, false);
         }
         
-        // Строка 2: Долгота
-        String line2 = "Lon: " + String(gpsData.longitude, 6);
+        // Строка 2: Долгота (динамическая точность по оставшемуся месту)
+        String line2_oled = formatCoordLine("Lon: ", gpsData.longitude, OLED_MAX_CHARS);
+        String line2_tft  = formatCoordLine("Lon: ", gpsData.longitude, TFT_MAX_CHARS);
         if (canUpdateOled) {
-            oledUpdated |= updateDisplayLine(2, line2, SSD1306_WHITE, true);
+            oledUpdated |= updateDisplayLine(2, line2_oled, SSD1306_WHITE, true);
         }
         if (canUpdateTft) {
-            tftUpdated |= updateDisplayLine(2, line2, TFT_WHITE, false);
+            tftUpdated |= updateDisplayLine(2, line2_tft, TFT_WHITE, false);
         }
         
         // Строка 3: Высота
