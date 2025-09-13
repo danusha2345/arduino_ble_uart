@@ -267,6 +267,28 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
     }
 };
 
+// Класс для обработки чтения TX-характеристики (fallback для клиентов без Notify)
+class TxCallbacks: public NimBLECharacteristicCallbacks {
+    void onRead(NimBLECharacteristic* pCharacteristic, ble_gap_conn_desc* desc) override {
+        // Попробуем отдать клиенту свежие данные из кольцевого буфера
+        uint16_t peerMtu = NimBLEDevice::getServer()->getPeerMTU(desc->conn_handle);
+        size_t maxPayload = peerMtu > 3 ? (peerMtu - 3) : 20; // ATT header 3 байта
+
+        size_t avail = getRingBufferAvailable();
+        size_t toRead = avail;
+        if (toRead > maxPayload) toRead = maxPayload;
+        if (toRead > sizeof(bleTempBuffer)) toRead = sizeof(bleTempBuffer);
+
+        if (toRead > 0) {
+            size_t n = readFromRingBuffer(bleTempBuffer, toRead);
+            pCharacteristic->setValue(bleTempBuffer, n);
+        } else {
+            // Нет данных — возвращаем пустое значение
+            pCharacteristic->setValue((uint8_t*)"", 0);
+        }
+    }
+};
+
 // Оптимизированная функция парсинга NMEA для получения точности и спутников
 // Использует только операции с C-строками, без объектов String
 // Вспомогательная функция для разделения NMEA строки на поля
@@ -904,8 +926,10 @@ void setup() {
     // Создание TX-характеристики (для отправки данных на телефон)
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        NIMBLE_PROPERTY::NOTIFY
+        // READ добавлен как резервный путь для клиентов, которые только читают
+        NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
     );
+    pTxCharacteristic->setCallbacks(new TxCallbacks());
 
     // Создание RX-характеристики (для приёма данных с телефона)
     NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
@@ -1011,24 +1035,21 @@ void loop() {
             }
             
             if (shouldSend) {
-                // Читаем оптимальное количество данных (не больше 512 байт)
-                size_t toRead = (available > 512) ? 512 : available;
-                size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
-                
-                if (bytesRead > 0) {
-                    // Отправляем данные через BLE (только если есть подписчики)
-                    if (pTxCharacteristic->getSubscribedCount() > 0) {
+                // Отправляем только если есть подписчики, чтобы не терять данные
+                if (pTxCharacteristic->getSubscribedCount() > 0) {
+                    // Читаем оптимальное количество данных (не больше 512 байт)
+                    size_t toRead = (available > 512) ? 512 : available;
+                    size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
+
+                    if (bytesRead > 0) {
                         pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
                         pTxCharacteristic->notify();
                         lastBleFlush = currentTime;
-                    } else {
-                        // Нет подписчиков – пропускаем отправку
-                        // (данные уже считаны из буфера; допускается потеря при отсутствии клиента)
-                    }
-                    
-                    // Логирование переполнения буфера
-                    if (getRingBufferOverflow()) {
-                        Serial.println("WARNING: Ring buffer overflow occurred!");
+
+                        // Логирование переполнения буфера
+                        if (getRingBufferOverflow()) {
+                            Serial.println("WARNING: Ring buffer overflow occurred!");
+                        }
                     }
                 }
             }
