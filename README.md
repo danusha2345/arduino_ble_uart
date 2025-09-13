@@ -18,20 +18,21 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
 
 ### Display Support
 - **OLED I2C Display** (128x64 SSD1306):
-  - Coordinates, altitude, total satellites used
-  - Fix type and accuracy in meters/centimeters
+  - Coordinates with dynamic precision (6–8 decimals to fit width)
+  - Altitude, plus local time HH:MM:SS if it fits the line
+  - Accuracy in meters/centimeters; when < 1 m shows centimeters with tenths: `N/S:xx.xcm E/W:yy.ycm`, `H:zz.zcm`
   - **GNSS constellation breakdown** (G:X R:Y E:Z B:W Q:V)
+  - Line width ≈ 21 characters (textSize=1)
 - **TFT SPI Display** (135x240 ST7789V):
-  - Color-coded information with larger fonts
-  - Same data as OLED with enhanced readability
+  - Same data with larger font and colors
+  - If accuracy line exceeds width (≈20 chars at textSize=2), labels shrink to `NS:`/`EW:` automatically
 
 ### BLE Features
 - **Nordic UART Service (NUS)** for universal compatibility
-- **High-speed data transfer**: 460800 baud UART
-- **Optimized performance**:
-  - Large MTU (517 bytes)
-  - Fast connection intervals (7.5-15ms)
-  - Maximum TX power (+9 dBm)
+- **TX characteristic: NOTIFY + READ** — Notify for streaming, READ as fallback for clients that only perform reads
+- **Subscription-aware sending**: data sent only when a client is subscribed; if none, the ring buffer is not drained
+- **High-speed path**: UART1 at 460800 baud → ring buffer → BLE (MTU up to 517)
+- **Optimized connection**: 7.5–15 ms interval, TX power +9 dBm
 - **Security**: PIN-based pairing (123456)
 
 ## Hardware Requirements
@@ -80,7 +81,7 @@ pio run --target upload
 pio run
 
 # Monitor serial output
-pio device monitor
+pio device monitor -b 460800
 ```
 
 ### Using VSCode with PlatformIO
@@ -91,7 +92,7 @@ pio device monitor
 ## BLE Connection
 
 ### Device Name
-`ESP32-BLE-UART`
+`ESP32-BLE-UART_2`
 
 ### Service UUIDs
 - **Service**: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
@@ -103,29 +104,29 @@ pio device monitor
 
 ## Testing Apps
 
-- **nRF Connect** (Android/iOS) - BLE debugging
-- **Serial Bluetooth Terminal** (Android) - Data monitoring
-- **Any app supporting Nordic UART Service**
+- **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). App enables Notify automatically and can send corrections (NTRIP) back over RX.
+- **nRF Connect** (Android/iOS) — diagnostics: connect, enable Notify on TX, write to RX.
+- Note: Classic SPP apps won’t work; this is BLE GATT (NUS).
 
 ## NMEA Data Flow
 
-1. GNSS module sends NMEA sentences via UART (460800 baud)
-2. ESP32-C3 parses messages with specialized parsers:
-   - **GSV**: Visible satellites per system
-   - **GSA**: Used satellites with System ID mapping for GNGSA
-   - **GNS**: Position, fix quality, total satellite count
-   - **GST**: Coordinate accuracy (standard deviations)
-3. Extracted data displayed on OLED/TFT with constellation breakdown
-4. Raw NMEA forwarded over BLE to connected device
+1. GNSS → UART1 (460800 baud)
+2. ESP32-C3 parses messages:
+   - **GSV**: visible satellites per system
+   - **GSA**: used satellites (incl. GNGSA system mapping)
+   - **GNS**: position, fix quality, satellites used
+   - **GST**: coordinate accuracy (std dev)
+3. Display updates (OLED/TFT) with dynamic precision and cm (tenths)
+4. Raw NMEA forwarded over BLE NUS (Notify when subscribed; READ fallback)
 
 ## Performance Notes
 
-- Display updates: 1-5 seconds (adaptive)
-- BLE latency: <20ms typical
-- UART buffer: 2048 bytes (ring buffer)
-- **Satellite timeout**: 10 seconds per constellation
-- **RTK accuracy timeout**: 30 seconds
-- **Modular NMEA parsing**: Efficient field splitting without strtok_r
+- Display updates: OLED ≈2 FPS, TFT ≈3 FPS; forced refresh every 30 s
+- BLE send conditions: ≥500 bytes ready or 20–50 ms since last send
+- UART ring buffer: 2048 bytes; overflow flagged in Serial log
+- Subscription-aware: buffer not drained if no clients subscribed
+- Time zone: local time shown; auto offset ~ round(longitude/15°), no DST
+- Satellite timeout: 10 s; RTK accuracy timeout: 30 s
 
 ## License
 

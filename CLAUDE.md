@@ -12,7 +12,7 @@ Advanced ESP32-C3 GPS/GNSS to BLE bridge with real-time positioning data transmi
 - **MCU**: ESP32-C3 Super Mini (configured as `esp32dev` with `esp32-c3-devkitm-1` board)
 - **BLE Stack**: NimBLE-Arduino library for efficient memory usage
 - **UART Configuration**: 
-  - UART0: USB serial monitor/debug (115200 baud)
+  - UART0: USB serial monitor/debug (460800 baud)
   - UART1: GNSS data (RX: GPIO8, TX: GPIO10, 460800 baud)
 
 ### Display Support
@@ -74,14 +74,14 @@ The project uses specific GPIO pins for UART1:
 - **GPIO8**: RX (receive data from external device)
 - **GPIO10**: TX (transmit data to external device)
 
-**Note**: README.md incorrectly mentions GPIO4/GPIO5 - the actual implementation uses GPIO8/GPIO10 as defined in src/main.cpp:57.
+**Note**: UART1 uses GPIO8/GPIO10 as defined in `src/main.cpp`.
 
 ## BLE Service Implementation
 
 The firmware implements Nordic UART Service (NUS) with standard UUIDs:
 - Service: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
 - RX Characteristic: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` (write from client)
-- TX Characteristic: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (notify to client)
+- TX Characteristic: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (notify to client; also `READ` fallback via `onRead` pulling from ring buffer up to MTU-3)
 
 ## Dependencies
 
@@ -100,8 +100,11 @@ GitHub Actions workflow (`.github/workflows/release.yml`) automatically builds a
 - The project uses a single source file `src/main.cpp` with embedded callback classes
 - PIN code is hardcoded to `123456` for pairing
 - Upload port is configured for `/dev/ttyACM0` (Linux)
-- Monitor speed matches UART speed: 115200 baud
-- Device advertises as "ESP32-BLE-UART"
+- Monitor speed: 460800 baud
+- Device advertises as "ESP32-BLE-UART_2"
+- TX supports `NOTIFY` + `READ`; notifications only when subscribed (subscription-aware); ring buffer (2048 B) is not drained without subscribers
+- Display lines: OLED ≈21 chars (size 1), TFT ≈20 chars (size 2); Lat/Lon precision 6–8 decimals auto-fit; accuracy <1 m shown in cm with tenths; TFT accuracy labels shrink to `NS:`/`EW:` if needed
+- Altitude line adds local time `HH:MM:SS` if it fits; local time offset estimated from longitude (round(lon/15), clamped −12..+14), DST not applied
 
 ## NMEA Parser Architecture
 
@@ -142,7 +145,7 @@ Satellite counts shown as: `G:9 R:5 E:3 B:2 Q:1` (used satellites per system)
 ## Testing and Debugging
 
 Recommended BLE client apps for testing:
-- nRF Connect for Mobile (Android/iOS)
-- Serial Bluetooth Terminal (Android)
+- SW Maps (Android/iOS): External GNSS → Generic NMEA (Bluetooth LE)
+- nRF Connect for Mobile (Android/iOS) for diagnostics
 
 Serial debugging output is available through USB at 460800 baud showing connection status and BLE events.
