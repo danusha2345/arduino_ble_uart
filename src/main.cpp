@@ -658,16 +658,16 @@ String formatAccuracyString(int lineType) {
     }
     
     if (lineType == 1) { // Первая строка точности
-        // При высокой точности (< 1м) показываем в сантиметрах
+        // При высокой точности (< 1м) показываем в сантиметрах с десятыми
         if (gpsData.latAccuracy < 1.0 && gpsData.lonAccuracy < 1.0) {
-            return "N/S:" + String(gpsData.latAccuracy * 100, 0) + " E/W:" + String(gpsData.lonAccuracy * 100, 0) + "cm";
+            return "N/S:" + String(gpsData.latAccuracy * 100, 1) + " E/W:" + String(gpsData.lonAccuracy * 100, 1) + "cm";
         } else {
             return "N/S:" + String(gpsData.latAccuracy, 1) + " E/W:" + String(gpsData.lonAccuracy, 1) + "m";
         }
     } else { // Вторая строка точности
-        // При высокой точности (< 1м) показываем в сантиметрах
+        // При высокой точности (< 1м) показываем в сантиметрах с десятыми
         if (gpsData.verticalAccuracy < 1.0) {
-            return "H:" + String(gpsData.verticalAccuracy * 100, 0) + "cm";
+            return "H:" + String(gpsData.verticalAccuracy * 100, 1) + "cm";
         } else {
             return "H:" + String(gpsData.verticalAccuracy, 1) + "m";
         }
