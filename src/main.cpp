@@ -670,6 +670,49 @@ static String formatCoordLine(const char* label, double value, int maxChars, int
     return best;
 }
 
+// Форматирование времени GPS как HH:MM:SS (UTC). Пустая строка, если нет валидного времени
+static String formatGpsTime() {
+    if (gps.time.isValid()) {
+        char buf[9];
+        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
+        return String(buf);
+    }
+    return String("");
+}
+
+// Форматирование строки высоты с возможным добавлением времени при наличии места
+static String formatAltitudeLine(int maxChars) {
+    // Базовый формат с 1 знаком после запятой
+    String base = String("Alt: ") + String(gpsData.altitude, 1) + "m";
+    String t = formatGpsTime();
+    if (t.length() == 0) return base;
+
+    // Предпочтительно с пробелом
+    if ((int)base.length() + 1 + (int)t.length() <= maxChars) {
+        return base + " " + t;
+    }
+
+    // Попробуем уменьшить точность до 0 знаков
+    String base0 = String("Alt: ") + String(gpsData.altitude, 0) + "m";
+    if ((int)base0.length() + 1 + (int)t.length() <= maxChars) {
+        return base0 + " " + t;
+    }
+
+    // Попробуем без пробела
+    if ((int)base.length() + (int)t.length() <= maxChars) {
+        return base + t;
+    }
+
+    // Последняя попытка: убрать единицу измерения для экономии 1 символа
+    String baseNoUnit = String("Alt: ") + String(gpsData.altitude, 0);
+    if ((int)baseNoUnit.length() + 1 + (int)t.length() <= maxChars) {
+        return baseNoUnit + " " + t;
+    }
+
+    // Не помещается — оставляем только высоту
+    return base;
+}
+
 String formatAccuracyString(int lineType) {
     if (gpsData.latAccuracy >= 99.9 && gpsData.lonAccuracy >= 99.9) {
         return ""; // Нет данных о точности
@@ -748,13 +791,14 @@ void updateDisplay() {
             tftUpdated |= updateDisplayLine(2, line2_tft, TFT_WHITE, false);
         }
         
-        // Строка 3: Высота
-        String line3 = "Alt: " + String(gpsData.altitude, 1) + "m";
+        // Строка 3: Высота (+ время, если помещается по ширине)
+        String line3_oled = formatAltitudeLine(OLED_MAX_CHARS);
+        String line3_tft  = formatAltitudeLine(TFT_MAX_CHARS);
         if (canUpdateOled) {
-            oledUpdated |= updateDisplayLine(3, line3, SSD1306_WHITE, true);
+            oledUpdated |= updateDisplayLine(3, line3_oled, SSD1306_WHITE, true);
         }
         if (canUpdateTft) {
-            tftUpdated |= updateDisplayLine(3, line3, TFT_YELLOW, false);
+            tftUpdated |= updateDisplayLine(3, line3_tft, TFT_YELLOW, false);
         }
         
         // Строки точности (если доступны)
