@@ -2,6 +2,8 @@
 
 Advanced positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays.
 
+![Uploading photo_2025-09-13_22-07-39.jpg…]()
+
 ## Features
 
 ### GNSS/GPS Capabilities
