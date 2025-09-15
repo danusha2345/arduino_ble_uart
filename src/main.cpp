@@ -690,18 +690,32 @@ String formatSatelliteString() {
 }
 
 // Форматирование строки координаты под ограничение количества символов
-static String formatCoordLine(const char* label, double value, int maxChars, int minDecimals = 6, int maxDecimals = 8) {
-    String best = String(label) + String(value, minDecimals);
-    // Увеличиваем число знаков после запятой, пока строка помещается
-    for (int d = minDecimals + 1; d <= maxDecimals; ++d) {
-        String candidate = String(label) + String(value, d);
-        if ((int)candidate.length() <= maxChars) {
-            best = candidate;
-        } else {
-            break;
-        }
+static String formatCoordLine(const char* label, double value, int maxChars) {
+    // Вычисляем сколько символов доступно для числа
+    int labelLen = strlen(label);
+    int availableForNumber = maxChars - labelLen;
+
+    // Определяем сколько знаков до запятой (включая знак минус если есть)
+    int wholePart = (value < 0) ? 1 : 0;  // Знак минус
+    wholePart += (abs(value) >= 100) ? 3 : (abs(value) >= 10) ? 2 : 1;  // Цифры до запятой
+
+    // Вычисляем максимальное количество десятичных знаков
+    int maxDecimals = availableForNumber - wholePart - 1;  // -1 для точки
+
+    // Ограничиваем разумными пределами
+    if (maxDecimals < 4) maxDecimals = 4;  // Минимум 4 знака для базовой точности
+    if (maxDecimals > 10) maxDecimals = 10;  // Максимум 10 знаков (избыточная точность)
+
+    // Формируем строку с максимально возможной точностью
+    String result = String(label) + String(value, maxDecimals);
+
+    // Если получилось слишком длинно, уменьшаем точность
+    while (result.length() > maxChars && maxDecimals > 4) {
+        maxDecimals--;
+        result = String(label) + String(value, maxDecimals);
     }
-    return best;
+
+    return result;
 }
 
 // Настройки часового пояса
@@ -1076,7 +1090,7 @@ void setup() {
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
     // Максимальная скорость - минимальные интервалы
-    pAdvertising->setPreferredParams(0x06, 0x06); // 7.5ms - самый быстрый
+    pAdvertising->setPreferredParams(0x06, 0x16); // 7.5ms - самый быстрый
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
     
