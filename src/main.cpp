@@ -1043,14 +1043,14 @@ void setup() {
     // Создание TX-характеристики (для отправки данных на телефон)
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        BLE_GATT_CHR_PROPS_NOTIFY | BLE_GATT_CHR_PROPS_READ
+        BLE_GATT_CHR_PROP_NOTIFY | BLE_GATT_CHR_PROP_READ
     );
     pTxCharacteristic->setCallbacks(new TxCallbacks());
 
     // Создание RX-характеристики (для приёма данных с телефона)
     NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_RX,
-        BLE_GATT_CHR_PROPS_WRITE | BLE_GATT_CHR_PROPS_WRITE_NO_RSP
+        BLE_GATT_CHR_PROP_WRITE | BLE_GATT_CHR_PROP_WRITE_NO_RSP
     );
     pRxCharacteristic->setCallbacks(new RxCallbacks());
 
@@ -1155,21 +1155,20 @@ void loop() {
             }
             
             if (shouldSend) {
-                // Отправляем только если есть подписчики, чтобы не терять данные
-                if (pTxCharacteristic->getSubscribedCount() > 0) {
-                    // Читаем оптимальное количество данных (не больше 512 байт)
-                    size_t toRead = (available > 512) ? 512 : available;
-                    size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
-
-                    if (bytesRead > 0) {
-                        pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                        pTxCharacteristic->notify();
-                        lastBleFlush = currentTime;
-
-                        // Логирование переполнения буфера
-                        if (getRingBufferOverflow()) {
-                            Serial.println("WARNING: Ring buffer overflow occurred!");
-                        }
+                // В NimBLE 2.x нет getSubscribedCount(), стек сам обработает подписки
+                // Читаем оптимальное количество данных (не больше 512 байт)
+                size_t toRead = (available > 512) ? 512 : available;
+                size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
+                
+                if (bytesRead > 0) {
+                    // Отправляем данные через BLE
+                    pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                    pTxCharacteristic->notify();
+                    lastBleFlush = currentTime;
+                    
+                    // Логирование переполнения буфера
+                    if (getRingBufferOverflow()) {
+                        Serial.println("WARNING: Ring buffer overflow occurred!");
                     }
                 }
             }
