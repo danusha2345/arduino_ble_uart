@@ -663,15 +663,35 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
 }
 
 String formatSatelliteString() {
-    String satStr = "G:" + String(satData.gps.used) + 
-                   " R:" + String(satData.glonass.used) +
-                   " E:" + String(satData.galileo.used) +
-                   " B:" + String(satData.beidou.used);
-    
-    if (satData.qzss.used > 0) {
-        satStr += " Q:" + String(satData.qzss.used);
+    // Компактный формат без пробелов для двузначных чисел
+    // Если все числа однозначные - используем пробелы
+    bool hasDoubleDigit = (satData.gps.used >= 10) ||
+                          (satData.glonass.used >= 10) ||
+                          (satData.galileo.used >= 10) ||
+                          (satData.beidou.used >= 10) ||
+                          (satData.qzss.used >= 10);
+
+    String satStr;
+    if (hasDoubleDigit) {
+        // Компактный формат без пробелов: G:12R:8E:10B:5Q:1
+        satStr = "G:" + String(satData.gps.used) +
+                 "R:" + String(satData.glonass.used) +
+                 "E:" + String(satData.galileo.used) +
+                 "B:" + String(satData.beidou.used);
+        if (satData.qzss.used > 0) {
+            satStr += "Q:" + String(satData.qzss.used);
+        }
+    } else {
+        // Обычный формат с пробелами: G:9 R:5 E:3 B:2 Q:1
+        satStr = "G:" + String(satData.gps.used) +
+                 " R:" + String(satData.glonass.used) +
+                 " E:" + String(satData.galileo.used) +
+                 " B:" + String(satData.beidou.used);
+        if (satData.qzss.used > 0) {
+            satStr += " Q:" + String(satData.qzss.used);
+        }
     }
-    
+
     return satStr;
 }
 
