@@ -15,9 +15,10 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
   - **GSA**: Used satellites per system with System ID support for GNGSA
   - **GSV**: Visible satellites per system
 - **Satellite tracking**: Separate visible/used counts per GNSS constellation
-- **Real-time display**: System breakdown with adaptive spacing:
-  - Single digits: `G:9 R:5 E:3 B:2 Q:1` (with spaces)
-  - Double digits: `G:12R:8E:10B:5Q:1` (compact, no spaces)
+- **Real-time display**: System breakdown with smart formatting:
+  - Auto-switches to compact format when string exceeds 20 characters
+  - Normal: `G:9 R:5 E:3 B:2 Q:1` (with spaces for readability)
+  - Compact: `G:12R:8E:10B:5Q:1` (no spaces to fit display)
 - **Fix modes**: GPS, DGPS, High Precision, RTK Fixed, RTK Float, Manual, Simulator
 
 ### Display Support
