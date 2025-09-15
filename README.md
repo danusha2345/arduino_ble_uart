@@ -2,7 +2,8 @@
 
 Advanced positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays.
 
-<img width="1920" height="2560" alt="photo_2025-09-13_22-07-39" src="https://github.com/user-attachments/assets/d3c95b29-41e1-4857-b998-03b8f2fd4cc4" />
+
+<img width="1920" height="2560" alt="photo_2025-09-15_14-08-49" src="https://github.com/user-attachments/assets/6384bac2-2426-4ae1-ac8b-758c5f1b6196" />
 
 ## Features
 
@@ -160,6 +161,8 @@ pio device monitor -b 460800
 - **v1.2.0** (2025) - NimBLE-Arduino 2.x compatibility update
 - **v1.1.x** - Added local time display with timezone support
 - **v1.0.x** - Initial release with dual display and RTK support
+
+<img width="1920" height="2560" alt="photo_2025-09-13_22-07-39" src="https://github.com/user-attachments/assets/d3c95b29-41e1-4857-b998-03b8f2fd4cc4" />
 
 ## License
 
