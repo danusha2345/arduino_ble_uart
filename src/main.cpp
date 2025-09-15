@@ -241,19 +241,19 @@ static bool oldDeviceConnected = false;
 
 // Класс для обработки событий подключения/отключения
 class ServerCallbacks: public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
+    void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
         deviceConnected = true;
         Serial.println("Client connected");
     }
 
-    void onDisconnect(NimBLEServer* pServer) {
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
         deviceConnected = false;
-        Serial.println("Client disconnected");
+        Serial.printf("Client disconnected, reason: %d\n", reason);
         // Очищаем кольцевой буфер при отключении
         clearRingBuffer();
         Serial.println("Ring buffer cleared");
         // Перезапускаем advertising, чтобы устройство снова было видно
-        NimBLEDevice::getAdvertising()->start();
+        NimBLEDevice::startAdvertising();
     }
 };
 
@@ -271,9 +271,10 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
 
 // Класс для обработки чтения TX-характеристики (fallback для клиентов без Notify)
 class TxCallbacks: public NimBLECharacteristicCallbacks {
-    void onRead(NimBLECharacteristic* pCharacteristic) {
+    void onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
         // Попробуем отдать клиенту свежие данные из кольцевого буфера
-        size_t maxPayload = 512; // Используем фиксированный размер для совместимости
+        uint16_t peerMtu = NimBLEDevice::getServer()->getPeerMTU(connInfo.getConnHandle());
+        size_t maxPayload = peerMtu > 3 ? (peerMtu - 3) : 20; // ATT header 3 байта
 
         size_t avail = getRingBufferAvailable();
         size_t toRead = avail;
@@ -1013,21 +1014,24 @@ void setup() {
     SerialPort.begin(460800, SERIAL_8N1, 8, 10);
 
     // Инициализация BLE
-    NimBLEDevice::init("ESP32-BLE-UART_2");
+    NimBLEDevice::init("ESP32-BLE-UART_1");
 
     // Увеличиваем MTU для максимальной скорости
     NimBLEDevice::setMTU(517);
 
     // NEW: Set BLE TX power to the maximum (+9 dBm)
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-    Serial.println("BLE TX power set to maximum.");
+    NimBLEDevice::setPower(9); // 9 dBm - максимальная мощность
+    Serial.println("BLE TX power set to maximum (9 dBm).");
 
-    // Настройка безопасности - устанавливаем PIN для паринга
-    NimBLEDevice::setSecurityAuth(true, true, true);
+    // Настройка безопасности для сопряжения с PIN-кодом
+    NimBLEDevice::setSecurityAuth(
+        true, // bonding
+        true, // mitm (man-in-the-middle protection)
+        true  // secure_connections
+    );
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
-    NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-    NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-    NimBLEDevice::setSecurityPasskey(123456);
+    uint32_t passkey = 123456; // Задаем 6-значный PIN-код
+    NimBLEDevice::setSecurityPasskey(passkey);
 
     // Создание BLE-сервера
     NimBLEServer *pServer = NimBLEDevice::createServer();
@@ -1039,15 +1043,14 @@ void setup() {
     // Создание TX-характеристики (для отправки данных на телефон)
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        // READ добавлен как резервный путь для клиентов, которые только читают
-        NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ
+        BLE_GATT_CHR_PROPS_NOTIFY | BLE_GATT_CHR_PROPS_READ
     );
     pTxCharacteristic->setCallbacks(new TxCallbacks());
 
     // Создание RX-характеристики (для приёма данных с телефона)
     NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_RX,
-        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+        BLE_GATT_CHR_PROPS_WRITE | BLE_GATT_CHR_PROPS_WRITE_NO_RSP
     );
     pRxCharacteristic->setCallbacks(new RxCallbacks());
 
@@ -1057,12 +1060,10 @@ void setup() {
     // Настройка и запуск advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->setName("ESP32-BLE-UART_2"); // ВАЖНО: без этого устройство не будет видно!
-    // Более агрессивные интервалы для лучшего обнаружения
-    pAdvertising->setMinInterval(0x06); // 7.5ms
-    pAdvertising->setMaxInterval(0x0C); // 12ms - уменьшено для быстрого обнаружения
-    pAdvertising->setAppearance(0x0080); // Generic Computer (опционально)
-    pAdvertising->start();
+    pAdvertising->enableScanResponse(true);
+    // Максимальная скорость - минимальные интервалы
+    pAdvertising->setPreferredParams(0x06, 0x06); // 7.5ms - самый быстрый
+    NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
     
     // Информация о кольцевом буфере
@@ -1155,7 +1156,7 @@ void loop() {
             
             if (shouldSend) {
                 // Отправляем только если есть подписчики, чтобы не терять данные
-                if (deviceConnected) {
+                if (pTxCharacteristic->getSubscribedCount() > 0) {
                     // Читаем оптимальное количество данных (не больше 512 байт)
                     size_t toRead = (available > 512) ? 512 : available;
                     size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
