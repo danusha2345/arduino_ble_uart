@@ -31,7 +31,7 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
 
 ### BLE Features
 - **Nordic UART Service (NUS)** for universal compatibility
-- **TX characteristic: NOTIFY + READ** — Notify for streaming, READ as fallback for clients that only perform reads
+- **TX characteristic: NOTIFY + READ** — Notify for streaming, READ as fallback for clients that only perform reads (NimBLE v2.x auto-manages subscriptions)
 - **Subscription-aware sending**: data sent only when a client is subscribed; if none, the ring buffer is not drained
 - **High-speed path**: UART1 at 460800 baud → ring buffer → BLE (MTU up to 517)
 - **Optimized connection**: 7.5–15 ms interval, TX power +9 dBm
@@ -67,10 +67,11 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
 
 - [PlatformIO](https://platformio.org/) IDE
 - Libraries (auto-installed):
-  - NimBLE-Arduino
-  - Adafruit SSD1306
-  - Arduino_GFX (for ST7789V)
-  - TinyGPSPlus
+  - NimBLE-Arduino (v2.3.6+)
+  - Adafruit SSD1306 (v2.5.7+)
+  - Adafruit GFX Library (v1.11.9+)
+  - Arduino_GFX (v1.6.1+ for ST7789V)
+  - TinyGPSPlus (v1.0.3+)
 
 ## Build and Upload
 
@@ -94,7 +95,7 @@ pio device monitor -b 460800
 ## BLE Connection
 
 ### Device Name
-`ESP32-BLE-UART_2`
+`ESP32-BLE-UART_1`
 
 ### Service UUIDs
 - **Service**: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
@@ -150,6 +151,12 @@ pio device monitor -b 460800
 - Notes:
   - NMEA time is UTC; the firmware only adjusts display time.
   - No runtime UI yet; if needed, a BLE command/NVS setting can be added.
+
+## Version History
+
+- **v1.2.0** (2025) - NimBLE-Arduino 2.x compatibility update
+- **v1.1.x** - Added local time display with timezone support
+- **v1.0.x** - Initial release with dual display and RTK support
 
 ## License
 
