@@ -263,8 +263,9 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
-            // Отправляем данные в UART1
+            // Отправляем данные в UART1 с добавлением CR LF для модуля UM980
             SerialPort.write(rxValue.c_str(), rxValue.length());
+            SerialPort.write("\r\n");  // CR LF для корректной обработки команд модулем UM980
             SerialPort.flush();
         }
     }
