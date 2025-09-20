@@ -259,12 +259,13 @@ class ServerCallbacks: public NimBLEServerCallbacks {
 
 // Класс для обработки записи в RX-характеристику
 class RxCallbacks: public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
             // Отправляем данные в UART1
             SerialPort.write(rxValue.c_str(), rxValue.length());
+            SerialPort.flush();
         }
     }
 };
@@ -1042,14 +1043,14 @@ void setup() {
     SerialPort.begin(460800, SERIAL_8N1, 8, 10);
 
     // Инициализация BLE
-    NimBLEDevice::init("ESP32-BLE-UART_1");
+    NimBLEDevice::init("um980_2");
+
 
     // Увеличиваем MTU для максимальной скорости
     NimBLEDevice::setMTU(517);
 
     // NEW: Set BLE TX power to the maximum (+9 dBm)
     NimBLEDevice::setPower(9); // 9 dBm - максимальная мощность
-    Serial.println("BLE TX power set to maximum (9 dBm).");
 
     // Настройка безопасности для сопряжения с PIN-кодом
     NimBLEDevice::setSecurityAuth(
@@ -1082,22 +1083,19 @@ void setup() {
     );
     pRxCharacteristic->setCallbacks(new RxCallbacks());
 
+
     // Запуск сервиса
     pService->start();
 
     // Настройка и запуск advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+    pAdvertising->setName("um980_2"); // Имя устройства должно быть установлено первым
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
     // Максимальная скорость - минимальные интервалы
     pAdvertising->setPreferredParams(0x06, 0x16); // 7.5ms - самый быстрый
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
-    
-    // Информация о кольцевом буфере
-    Serial.printf("Ring buffer initialized: %d bytes capacity\n", bleRingBuffer.capacity());
-    Serial.printf("Ring buffer available: %d bytes\n", getRingBufferAvailable());
-    Serial.printf("Ring buffer free: %d bytes\n", getRingBufferFree());
 }
 
 void checkDataTimeouts() {
