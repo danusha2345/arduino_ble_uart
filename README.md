@@ -40,6 +40,8 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 - **RX characteristic**: WRITE + WRITE_NO_RSP (sends commands to module)
 - **Subscription-aware sending**: data sent only when a client is subscribed
 - **High-speed path**: UART1 at 460800 baud ↔ ring buffer ↔ BLE (MTU up to 517)
+- **Subscription-aware sending**: data sent only when a client is subscribed
+- **High-speed path**: UART1 at 460800 baud ↔ ring buffer ↔ BLE (MTU up to 517)
 - **Optimized connection**: 7.5–15 ms interval, TX power +9 dBm
 - **No security**: Direct connection without pairing for easy access
 
@@ -99,7 +101,7 @@ pio device monitor -b 460800
 3. Click "Upload" button in status bar
 
 ## BLE Connection
-
+`um980_2`
 ### Device Name
 `um980_2`
 
@@ -125,6 +127,25 @@ pio device monitor -b 460800
 
 ### Recommended Apps
 - **Serial Bluetooth Terminal (Android/iOS)** — Best for command sending, auto-connects to Nordic UART Service
+- **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). Great for NTRIP corrections and positioning
+- **nRF Connect (Android/iOS)** — Advanced diagnostics: connect, enable Notify on TX, write to RX
+- Note: Classic SPP apps won't work; this is BLE GATT (NUS)
+1. Connect to `um980_2` device via Bluetooth
+2. Use any BLE terminal app (Serial Bluetooth Terminal, nRF Connect, etc.)
+3. Send commands directly to GNSS module:
+### Bidirectional Communication
+1. **Phone → ESP32 → GNSS**: Commands sent via BLE RX characteristic go directly to UART1 TX
+2. **GNSS → ESP32 → Phone**: NMEA data from UART1 RX goes to BLE TX characteristic
+
+### Data Processing
+1. GNSS ↔ UART1 (460800 baud, bidirectional)
+2. ESP32-C3 parses incoming NMEA messages:
+   SAVECONFIG
+   ```
+4. Receive responses immediately in the same terminal
+
+### Recommended Apps
+4. Raw NMEA data forwarded over BLE NUS (Notify when subscribed; READ fallback)
 - **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). Great for NTRIP corrections and positioning
 - **nRF Connect (Android/iOS)** — Advanced diagnostics: connect, enable Notify on TX, write to RX
 - Note: Classic SPP apps won't work; this is BLE GATT (NUS)
@@ -158,6 +179,11 @@ pio device monitor -b 460800
 
 - What you see: the altitude line can show local time in `HH:MM:SS`.
 - Default behavior: the firmware estimates time zone from longitude
+- **v2.0.0** (2025-01-20) - Full bidirectional Bluetooth communication! Send commands to GNSS module via phone
+  - Fixed NimBLE-Arduino 2.x callback signatures
+  - Resolved "multiple write characteristics" issue
+  - Added bidirectional UART-BLE bridge
+  - Device renamed to `um980_2` for UM980 module support
   - Offset ≈ round(longitude / 15°) hours, clamped from −12 to +14 hours.
   - Daylight saving time (DST) is not applied.
   - Because political time zones don’t strictly follow longitude, the
