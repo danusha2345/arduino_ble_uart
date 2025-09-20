@@ -1,6 +1,6 @@
 # ESP32-C3 GPS/GNSS to BLE Bridge with Dual Display
 
-Advanced positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays.
+Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays. **Now supports sending commands to GNSS modules via Bluetooth terminal on your phone!**
 
 
 <img width="1920" height="2560" alt="photo_2025-09-15_14-08-49" src="https://github.com/user-attachments/assets/6384bac2-2426-4ae1-ac8b-758c5f1b6196" />
@@ -34,12 +34,14 @@ Advanced positioning data bridge that receives GPS/GNSS data via UART and transm
   - If accuracy line exceeds width (≈20 chars at textSize=2), labels shrink to `NS:`/`EW:` automatically
 
 ### BLE Features
-- **Nordic UART Service (NUS)** for universal compatibility
-- **TX characteristic: NOTIFY + READ** — Notify for streaming, READ as fallback for clients that only perform reads (NimBLE v2.x auto-manages subscriptions)
-- **Subscription-aware sending**: data sent only when a client is subscribed; if none, the ring buffer is not drained
-- **High-speed path**: UART1 at 460800 baud → ring buffer → BLE (MTU up to 517)
+- **🔄 Bidirectional communication**: Send commands to GNSS module via Bluetooth terminal
+- **Nordic UART Service (NUS)** for universal compatibility with NimBLE-Arduino 2.3.6
+- **TX characteristic**: NOTIFY + READ (receives GNSS data from module)
+- **RX characteristic**: WRITE + WRITE_NO_RSP (sends commands to module)
+- **Subscription-aware sending**: data sent only when a client is subscribed
+- **High-speed path**: UART1 at 460800 baud ↔ ring buffer ↔ BLE (MTU up to 517)
 - **Optimized connection**: 7.5–15 ms interval, TX power +9 dBm
-- **Security**: PIN-based pairing (123456)
+- **No security**: Direct connection without pairing for easy access
 
 ## Hardware Requirements
 
@@ -99,7 +101,7 @@ pio device monitor -b 460800
 ## BLE Connection
 
 ### Device Name
-`ESP32-BLE-UART_1`
+`um980_2`
 
 ### Service UUIDs
 - **Service**: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
@@ -109,22 +111,39 @@ pio device monitor -b 460800
 ### PIN Code
 `123456`
 
-## Testing Apps
+## Using Bidirectional Communication
 
-- **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). App enables Notify automatically and can send corrections (NTRIP) back over RX.
-- **nRF Connect** (Android/iOS) — diagnostics: connect, enable Notify on TX, write to RX.
-- Note: Classic SPP apps won’t work; this is BLE GATT (NUS).
+### Send Commands to GNSS Module
+1. Connect to `um980_2` device via Bluetooth
+2. Use any BLE terminal app (Serial Bluetooth Terminal, nRF Connect, etc.)
+3. Send commands directly to GNSS module:
+   ```
+   CONFIG POS 55.7558 37.6176 123.45
+   SAVECONFIG
+   ```
+4. Receive responses immediately in the same terminal
+
+### Recommended Apps
+- **Serial Bluetooth Terminal (Android/iOS)** — Best for command sending, auto-connects to Nordic UART Service
+- **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). Great for NTRIP corrections and positioning
+- **nRF Connect (Android/iOS)** — Advanced diagnostics: connect, enable Notify on TX, write to RX
+- Note: Classic SPP apps won't work; this is BLE GATT (NUS)
 
 ## NMEA Data Flow
 
-1. GNSS → UART1 (460800 baud)
-2. ESP32-C3 parses messages:
+### Bidirectional Communication
+1. **Phone → ESP32 → GNSS**: Commands sent via BLE RX characteristic go directly to UART1 TX
+2. **GNSS → ESP32 → Phone**: NMEA data from UART1 RX goes to BLE TX characteristic
+
+### Data Processing
+1. GNSS ↔ UART1 (460800 baud, bidirectional)
+2. ESP32-C3 parses incoming NMEA messages:
    - **GSV**: visible satellites per system
    - **GSA**: used satellites (incl. GNGSA system mapping)
    - **GNS**: position, fix quality, satellites used
    - **GST**: coordinate accuracy (std dev)
 3. Display updates (OLED/TFT) with dynamic precision and cm (tenths)
-4. Raw NMEA forwarded over BLE NUS (Notify when subscribed; READ fallback)
+4. Raw NMEA data forwarded over BLE NUS (Notify when subscribed; READ fallback)
 
 ## Performance Notes
 
@@ -158,6 +177,11 @@ pio device monitor -b 460800
 
 ## Version History
 
+- **v2.0.0** (2025-01-20) - Full bidirectional Bluetooth communication! Send commands to GNSS module via phone
+  - Fixed NimBLE-Arduino 2.x callback signatures
+  - Resolved "multiple write characteristics" issue
+  - Added bidirectional UART-BLE bridge
+  - Device renamed to `um980_2` for UM980 module support
 - **v1.2.0** (2025) - NimBLE-Arduino 2.x compatibility update
 - **v1.1.x** - Added local time display with timezone support
 - **v1.0.x** - Initial release with dual display and RTK support
