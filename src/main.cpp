@@ -92,7 +92,7 @@ double convertToDecimalDegrees(double ddmm);
 // RING BUFFER IMPLEMENTATION FOR BLE DATA
 // ==============================================
 
-#define RING_BUFFER_SIZE 2048
+#define RING_BUFFER_SIZE 8192
 
 // Общий спинлок для секций кольцевого буфера
 static portMUX_TYPE ringbufMux = portMUX_INITIALIZER_UNLOCKED;
@@ -202,8 +202,19 @@ struct RingBuffer {
 static RingBuffer bleRingBuffer;
 
 // Временный буфер для чтения из кольцевого буфера
-static uint8_t bleTempBuffer[512]; // Оптимальный размер для BLE пакетов
+static uint8_t bleTempBuffer[480]; // Размер меньше MTU для целых NMEA строк
 static unsigned long lastBleFlush = 0;
+
+// Функция для поиска последней границы NMEA сообщения в буфере
+size_t findLastNmeaBoundary(const uint8_t* buffer, size_t length) {
+    // Ищем последнее вхождение "\r\n" в буфере
+    for (int i = length - 2; i >= 0; i--) {
+        if (buffer[i] == '\r' && buffer[i + 1] == '\n') {
+            return i + 2; // Возвращаем позицию сразу после \r\n
+        }
+    }
+    return 0; // Не найдено границы - отправлять не нужно
+}
 
 // Вспомогательные функции для работы с кольцевым буфером
 inline size_t writeToRingBuffer(const uint8_t* data, size_t len) {
@@ -908,12 +919,14 @@ void updateDisplay() {
             }
         }
         
-        // Строка спутников по системам
+        // Строка спутников по системам - принудительное обновление для корректного отображения
         String satLine = formatSatelliteString();
         if (canUpdateOled) {
+            oledLines[nextLine].needsUpdate = true; // Принудительное обновление
             oledUpdated |= updateDisplayLine(nextLine, satLine, SSD1306_WHITE, true);
         }
         if (canUpdateTft) {
+            tftLines[nextLine].needsUpdate = true; // Принудительное обновление
             tftUpdated |= updateDisplayLine(nextLine, satLine, TFT_WHITE, false);
         }
         nextLine++;
@@ -956,12 +969,14 @@ void updateDisplay() {
             }
             nextLine++;
             
-            // Строка 2: Спутники по системам
+            // Строка 2: Спутники по системам - принудительное обновление для корректного отображения
             String satLine = formatSatelliteString();
             if (canUpdateOled) {
+                oledLines[nextLine].needsUpdate = true; // Принудительное обновление
                 oledUpdated |= updateDisplayLine(nextLine, satLine, SSD1306_WHITE, true);
             }
             if (canUpdateTft) {
+                tftLines[nextLine].needsUpdate = true; // Принудительное обновление
                 tftUpdated |= updateDisplayLine(nextLine, satLine, TFT_WHITE, false);
             }
             nextLine++;
@@ -1165,34 +1180,52 @@ void loop() {
     if (deviceConnected) {
         size_t available = getRingBufferAvailable();
         
-        // Условия для отправки данных:
-        // 1. Буфер содержит >= 500 байт (почти полный BLE пакет)
-        // 2. Есть данные и прошло > 20мс с последней отправки (для уменьшения задержки)
-        // 3. Принудительная отправка через 50мс если есть любые данные
+        // Оптимизированные условия для отправки данных:
+        // 1. Буфер содержит >= 400 байт (эффективный BLE пакет)
+        // 2. Есть данные и прошло > 10мс с последней отправки (снижение задержки)
+        // 3. Принудительная отправка через 25мс если есть любые данные
         if (available > 0) {
             bool shouldSend = false;
             unsigned long currentTime = millis();
-            
-            if (available >= 500) {
+
+            if (available >= 400) {
                 shouldSend = true; // Отправляем большие пакеты сразу
-            } else if (available > 0 && (currentTime - lastBleFlush > 20)) {
-                shouldSend = true; // Отправляем небольшие пакеты через 20мс
-            } else if (available > 0 && (currentTime - lastBleFlush > 50)) {
-                shouldSend = true; // Принудительная отправка через 50мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 10)) {
+                shouldSend = true; // Отправляем небольшие пакеты через 10мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 25)) {
+                shouldSend = true; // Принудительная отправка через 25мс
             }
-            
+
             if (shouldSend) {
                 // В NimBLE 2.x нет getSubscribedCount(), стек сам обработает подписки
-                // Читаем оптимальное количество данных (не больше 512 байт)
-                size_t toRead = (available > 512) ? 512 : available;
+                // Читаем оптимальное количество данных (не больше 480 байт)
+                size_t toRead = (available > 480) ? 480 : available;
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
-                
+
                 if (bytesRead > 0) {
-                    // Отправляем данные через BLE
-                    pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                    pTxCharacteristic->notify();
-                    lastBleFlush = currentTime;
-                    
+                    // Интеллектуальная отправка: ищем границу NMEA сообщений
+                    size_t boundary = findLastNmeaBoundary(bleTempBuffer, bytesRead);
+
+                    if (boundary > 0) {
+                        // Найдена граница NMEA - отправляем только целые сообщения
+                        pTxCharacteristic->setValue(bleTempBuffer, boundary);
+                        pTxCharacteristic->notify();
+                        lastBleFlush = currentTime;
+
+                        // Возвращаем неотправленные данные обратно в буфер
+                        if (boundary < bytesRead) {
+                            writeToRingBuffer(bleTempBuffer + boundary, bytesRead - boundary);
+                        }
+                    } else if (currentTime - lastBleFlush > 50) {
+                        // Принудительная отправка через 50мс даже без границы NMEA
+                        pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                        pTxCharacteristic->notify();
+                        lastBleFlush = currentTime;
+                    } else {
+                        // Нет границы NMEA и не истекло время - возвращаем данные в буфер
+                        writeToRingBuffer(bleTempBuffer, bytesRead);
+                    }
+
                     // Логирование переполнения буфера
                     if (getRingBufferOverflow()) {
                         Serial.println("WARNING: Ring buffer overflow occurred!");
