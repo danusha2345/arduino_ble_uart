@@ -177,16 +177,12 @@ pio device monitor -b 460800
 
 ## Local Time & Time Zones
 
+- **Time source**: UTC time extracted from NMEA GGA sentences (GPS time)
 - What you see: the altitude line can show local time in `HH:MM:SS`.
 - Default behavior: the firmware estimates time zone from longitude
-- **v2.0.0** (2025-01-20) - Full bidirectional Bluetooth communication! Send commands to GNSS module via phone
-  - Fixed NimBLE-Arduino 2.x callback signatures
-  - Resolved "multiple write characteristics" issue
-  - Added bidirectional UART-BLE bridge
-  - Device renamed to `um980_2` for UM980 module support
   - Offset ≈ round(longitude / 15°) hours, clamped from −12 to +14 hours.
   - Daylight saving time (DST) is not applied.
-  - Because political time zones don’t strictly follow longitude, the
+  - Because political time zones don't strictly follow longitude, the
     auto‑offset can differ by ±1 hour in some regions.
 - Force a specific time zone offset (recommended if auto is wrong):
   - Edit `platformio.ini` in your environment block and add:
