@@ -2,6 +2,9 @@
 #include <NimBLEDevice.h>
 #include <HardwareSerial.h>
 #include "esp_wifi.h" // Required for disabling power saving
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiServer.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -250,19 +253,41 @@ static NimBLECharacteristic *pTxCharacteristic;
 static bool deviceConnected = false;
 static bool oldDeviceConnected = false;
 
+// WiFi variables
+const char* ssid = "UM980_GPS_BRIDGE";  // Default AP name
+const char* password = "123456789";     // Minimum 8 characters for WPA2
+WiFiServer wifiServer(23);              // Port 23 for telnet-like access
+WiFiClient wifiClients[4];              // Support up to 4 concurrent WiFi clients
+bool wifiClientConnected[4] = {false};
+unsigned long lastWiFiFlush = 0;
+
 // Класс для обработки событий подключения/отключения
 class ServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
         deviceConnected = true;
-        Serial.println("Client connected");
+        Serial.println("BLE Client connected");
     }
 
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
         deviceConnected = false;
-        Serial.printf("Client disconnected, reason: %d\n", reason);
-        // Очищаем кольцевой буфер при отключении
-        clearRingBuffer();
-        Serial.println("Ring buffer cleared");
+        Serial.printf("BLE Client disconnected, reason: %d\n", reason);
+        
+        // Очищаем кольцевой буфер при отключении, только если нет WiFi клиентов
+        bool hasWiFiConnection = false;
+        for (int i = 0; i < 4; i++) {
+            if (wifiClientConnected[i]) {
+                hasWiFiConnection = true;
+                break;
+            }
+        }
+        
+        if (!hasWiFiConnection) {
+            clearRingBuffer();
+            Serial.println("Ring buffer cleared (no WiFi clients connected)");
+        } else {
+            Serial.println("Ring buffer preserved (WiFi clients still connected)");
+        }
+        
         // Перезапускаем advertising, чтобы устройство снова было видно
         NimBLEDevice::startAdvertising();
     }
@@ -282,7 +307,7 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
     }
 };
 
-// Класс для обработки чтения TX-характеристики (fallback для клиентов без Notify)
+// Класс для обработки чтения TX-характеристки (fallback для клиентов без Notify)
 class TxCallbacks: public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
         // Попробуем отдать клиенту свежие данные из кольцевого буфера
@@ -303,6 +328,74 @@ class TxCallbacks: public NimBLECharacteristicCallbacks {
         }
     }
 };
+
+// WiFi client management function
+void handleWiFiClients() {
+    // Check for new client connections
+    if (wifiServer.hasClient()) {
+        // Find a free slot for the new client
+        for (int i = 0; i < 4; i++) {
+            if (!wifiClientConnected[i] || !wifiClients[i]) {
+                wifiClients[i] = wifiServer.available();
+                wifiClientConnected[i] = true;
+                Serial.printf("New WiFi client connected on slot %d\n", i);
+                break;
+            }
+        }
+        
+        // If server is full, reject the new client
+        WiFiClient tempClient = wifiServer.available();
+        if (tempClient) {
+            tempClient.stop();
+        }
+    }
+    
+    // Check for data from existing clients
+    for (int i = 0; i < 4; i++) {
+        if (wifiClientConnected[i] && wifiClients[i].available()) {
+            // Forward data from WiFi client to GPS module (like BLE does)
+            while (wifiClients[i].available()) {
+                char c = wifiClients[i].read();
+                SerialPort.write(&c, 1);
+            }
+            SerialPort.write("\r\n");  // Add CR LF for UM980 module
+            SerialPort.flush();
+        }
+        
+        // Check if client disconnected
+        if (wifiClientConnected[i] && !wifiClients[i].connected()) {
+            wifiClients[i].stop();
+            wifiClientConnected[i] = false;
+            Serial.printf("WiFi client disconnected from slot %d\n", i);
+            
+            // Check if all connections are gone, then clear the buffer
+            bool hasAnyConnection = deviceConnected; // BLE connected
+            bool hasWiFiConnection = false;
+            for (int j = 0; j < 4; j++) {
+                if (wifiClientConnected[j]) {
+                    hasWiFiConnection = true;
+                    break;
+                }
+            }
+            if (!hasAnyConnection && !hasWiFiConnection) {
+                clearRingBuffer();
+                Serial.println("Ring buffer cleared (all connections disconnected)");
+            }
+        }
+    }
+}
+
+// WiFi data sending function
+void sendWiFiData(const uint8_t* data, size_t length) {
+    for (int i = 0; i < 4; i++) {
+        if (wifiClientConnected[i] && wifiClients[i]) {
+            size_t sent = wifiClients[i].write(data, length);
+            if (sent != length) {
+                Serial.printf("WiFi client %d: only sent %d of %d bytes\n", i, sent, length);
+            }
+        }
+    }
+}
 
 // Оптимизированная функция парсинга NMEA для получения точности и спутников
 // Использует только операции с C-строками, без объектов String
@@ -754,7 +847,7 @@ static String formatLocalTime() {
     if (!gps.time.isValid()) return String("");
     long sec = gps.time.hour() * 3600L + gps.time.minute() * 60L + gps.time.second();
     sec += (long)tzOffsetMinutes * 60L;
-    // Нормализация в пределы суток
+    // Нормализация в пределах суток
     sec %= 86400L;
     if (sec < 0) sec += 86400L;
     int hh = (int)(sec / 3600L);
@@ -1020,11 +1113,22 @@ void updateDisplay() {
 void setup() {
     // Запускаем основной UART для логирования
     Serial.begin(460800);
-    Serial.println("Starting BLE to UART bridge...");
+    Serial.println("Starting BLE and WiFi to UART bridge...");
 
     // NEW: Disable WiFi/BLE modem power saving
     esp_wifi_set_ps(WIFI_PS_NONE);
     Serial.println("Modem power saving disabled.");
+
+    // Initialize WiFi as Access Point
+    WiFi.softAP(ssid, password);
+    wifiServer.begin();
+    wifiServer.setNoDelay(true); // For better real-time performance
+    Serial.println("WiFi AP created:");
+    Serial.print("SSID: ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
+    Serial.println(WiFi.softAPIP());
+    Serial.println("WiFi server started on port 23");
 
     // Инициализация I2C и OLED дисплея
     Wire.begin(SDA_PIN, SCL_PIN);
@@ -1145,7 +1249,16 @@ void loop() {
         
         
         // Записываем весь пакет в кольцевой буфер одной операцией
-        if (deviceConnected && bytesRead > 0) {
+        // Теперь записываем, если подключен хотя бы один из интерфейсов (BLE или WiFi)
+        bool hasAnyConnection = deviceConnected; // BLE connected
+        for (int i = 0; i < 4; i++) {
+            if (wifiClientConnected[i]) {
+                hasAnyConnection = true;
+                break;
+            }
+        }
+        
+        if (hasAnyConnection && bytesRead > 0) {
             writeToRingBuffer(uartReadBuffer, bytesRead);
         }
         
@@ -1176,12 +1289,23 @@ void loop() {
         }
     }
 
-    // Отправляем данные из кольцевого буфера через BLE
-    if (deviceConnected) {
+    // Обработка WiFi клиентов (проверяем подключения и получаем команды)
+    handleWiFiClients();
+
+    // Отправляем данные из кольцевого буфера через BLE и WiFi
+    bool hasAnyConnection = deviceConnected; // BLE connected
+    for (int i = 0; i < 4; i++) {
+        if (wifiClientConnected[i]) {
+            hasAnyConnection = true;
+            break;
+        }
+    }
+
+    if (hasAnyConnection) {
         size_t available = getRingBufferAvailable();
         
         // Оптимизированные условия для отправки данных:
-        // 1. Буфер содержит >= 400 байт (эффективный BLE пакет)
+        // 1. Буфер содержит >= 400 байт (эффективный пакет)
         // 2. Есть данные и прошло > 10мс с последней отправки (снижение задержки)
         // 3. Принудительная отправка через 25мс если есть любые данные
         if (available > 0) {
@@ -1197,8 +1321,7 @@ void loop() {
             }
 
             if (shouldSend) {
-                // В NimBLE 2.x нет getSubscribedCount(), стек сам обработает подписки
-                // Читаем оптимальное количество данных (не больше 480 байт)
+                // Читаем оптимальное количество данных (не больше 480 байт для BLE, не больше 1460 для WiFi)
                 size_t toRead = (available > 480) ? 480 : available;
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
 
@@ -1208,8 +1331,20 @@ void loop() {
 
                     if (boundary > 0) {
                         // Найдена граница NMEA - отправляем только целые сообщения
-                        pTxCharacteristic->setValue(bleTempBuffer, boundary);
-                        pTxCharacteristic->notify();
+                        
+                        // Отправляем через BLE, если подключен
+                        if (deviceConnected) {
+                            pTxCharacteristic->setValue(bleTempBuffer, boundary);
+                            pTxCharacteristic->notify();
+                        }
+                        
+                        // Отправляем через WiFi, если есть подключенные клиенты
+                        for (int i = 0; i < 4; i++) {
+                            if (wifiClientConnected[i]) {
+                                sendWiFiData(bleTempBuffer, boundary);
+                            }
+                        }
+                        
                         lastBleFlush = currentTime;
 
                         // Возвращаем неотправленные данные обратно в буфер
@@ -1218,8 +1353,20 @@ void loop() {
                         }
                     } else if (currentTime - lastBleFlush > 50) {
                         // Принудительная отправка через 50мс даже без границы NMEA
-                        pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                        pTxCharacteristic->notify();
+                        
+                        // Отправляем через BLE, если подключен
+                        if (deviceConnected) {
+                            pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                            pTxCharacteristic->notify();
+                        }
+                        
+                        // Отправляем через WiFi, если есть подключенные клиенты
+                        for (int i = 0; i < 4; i++) {
+                            if (wifiClientConnected[i]) {
+                                sendWiFiData(bleTempBuffer, bytesRead);
+                            }
+                        }
+                        
                         lastBleFlush = currentTime;
                     } else {
                         // Нет границы NMEA и не истекло время - возвращаем данные в буфер
@@ -1245,8 +1392,28 @@ void loop() {
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // Даем время для BLE-стека
         oldDeviceConnected = deviceConnected;
+        Serial.println("BLE client disconnected");
     }
     if (deviceConnected && !oldDeviceConnected) {
         oldDeviceConnected = deviceConnected;
+        Serial.println("BLE client connected");
     }
+    
+    // Check for changes in WiFi client connections
+    static bool oldWifiConnected = false;
+    bool currentWifiConnected = false;
+    for (int i = 0; i < 4; i++) {
+        if (wifiClientConnected[i]) {
+            currentWifiConnected = true;
+            break;
+        }
+    }
+    
+    if (!currentWifiConnected && oldWifiConnected) {
+        Serial.println("All WiFi clients disconnected");
+    }
+    if (currentWifiConnected && !oldWifiConnected) {
+        Serial.println("WiFi client connected");
+    }
+    oldWifiConnected = currentWifiConnected;
 }
