@@ -113,6 +113,27 @@ pio device monitor -b 460800
 ### PIN Code
 `123456`
 
+## WiFi Connection
+**New Feature**: The device also supports WiFi connectivity for direct access to the GNSS module via TCP port 23.
+
+### WiFi Access Point Settings
+- **SSID**: `UM980_GPS_BRIDGE`
+- **Password**: `123456789`
+- **IP Address**: `192.168.4.1`
+- **Port**: `23` (telnet-like access)
+
+### Connecting via WiFi
+1. Connect your device (phone/computer) to the WiFi network `UM980_GPS_BRIDGE` using password `123456789`
+2. Use any TCP client or telnet application to connect to `192.168.4.1:23`
+3. Send commands directly to the GNSS module and receive responses in real-time
+4. Commands sent via WiFi are forwarded to the GNSS module just like BLE commands
+5. GNSS data is forwarded to all connected WiFi clients simultaneously with BLE clients
+
+### WiFi Performance
+- Supports up to 4 concurrent WiFi clients
+- Low latency communication with `setNoDelay(true)` setting
+- Bidirectional communication like BLE connection
+
 ## Using Bidirectional Communication
 
 ### Send Commands to GNSS Module
