@@ -1254,12 +1254,13 @@ void setup() {
     NimBLEDevice::setPower(9); // 9 dBm - максимальная мощность
 
     // Настройка безопасности для сопряжения с PIN-кодом
+    // Отключаем для максимальной совместимости и производительности
     NimBLEDevice::setSecurityAuth(
-        false, // bonding - ОТКЛЮЧЕНО для NTRIP (быстрое переподключение)
+        false, // bonding - ОТКЛЮЧЕНО для быстрого переподключения
         false, // mitm - ОТКЛЮЧЕНО
         false  // secure_connections - ОТКЛЮЧЕНО
     );
-    // Убираем PIN для совместимости с NTRIP клиентами
+    // PIN не используется для упрощения подключения
     // NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
     // NimBLEDevice::setSecurityPasskey(123456);
 
@@ -1385,11 +1386,11 @@ void loop() {
     if (hasAnyConnection) {
         size_t available = getRingBufferAvailable();
         
-        // Оптимизированные условия для отправки данных:
-        // 1. Буфер содержит >= 500 байт (эффективный пакет)
-        // 2. Есть данные и прошло > 15мс с последней отправки
-        // 3. Принудительная отправка через 40мс если есть любые данные
-        // 4. Защита от переполнения: принудительная отправка при > 12KB в буфере
+        // АГРЕССИВНАЯ отправка для максимальной пропускной способности:
+        // 1. Буфер содержит >= 400 байт - отправляем сразу
+        // 2. Есть данные и прошло > 7мс с последней отправки
+        // 3. Принудительная отправка через 20мс если есть любые данные
+        // 4. Критическая защита: при > 12KB принудительная отправка
         if (available > 0) {
             bool shouldSend = false;
             unsigned long currentTime = millis();
@@ -1397,16 +1398,17 @@ void loop() {
             if (available >= 12288) {
                 shouldSend = true; // КРИТИЧНО: буфер почти полон!
                 Serial.println("WARNING: Buffer near full, forcing send");
-            } else if (available >= 500) {
+            } else if (available >= 400) {
                 shouldSend = true; // Отправляем большие пакеты сразу
-            } else if (available > 0 && (currentTime - lastBleFlush > 15)) {
-                shouldSend = true; // Отправляем небольшие пакеты через 15мс
-            } else if (available > 0 && (currentTime - lastBleFlush > 40)) {
-                shouldSend = true; // Принудительная отправка через 40мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 7)) {
+                shouldSend = true; // Быстрая отправка через 7мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 20)) {
+                shouldSend = true; // Принудительная отправка через 20мс
             }
 
             if (shouldSend) {
-                // Читаем оптимальное количество данных (не больше 480 байт для BLE, не больше 1460 для WiFi)
+                // Читаем максимально возможное количество данных для эффективности
+                // MTU-3 = ~514 байт, но используем 480 для безопасности + границы NMEA
                 size_t toRead = (available > 480) ? 480 : available;
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
 
