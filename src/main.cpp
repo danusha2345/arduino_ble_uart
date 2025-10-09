@@ -400,22 +400,49 @@ void sendWiFiData(const uint8_t* data, size_t length) {
 // Оптимизированная функция парсинга NMEA для получения точности и спутников
 // Использует только операции с C-строками, без объектов String
 // Вспомогательная функция для разделения NMEA строки на поля
-static int splitFields(const char *nmea, const char *fields[], int maxFields) {
+// Модифицирует строку, заменяя запятые и звёздочки на '\0'
+// ВАЖНО: требует модифицируемую копию строки!
+static int splitFields(char *nmea, char *fields[], int maxFields) {
     int count = 0;
-    const char *p = nmea;
+    char *p = nmea;
+    
     while (*p && count < maxFields) {
         fields[count++] = p;
-        const char *c = strchr(p, ',');
-        if (!c) break;
-        p = c + 1;
+        
+        // Ищем запятую или звёздочку (начало checksum)
+        char *c = p;
+        while (*c && *c != ',' && *c != '*') {
+            c++;
+        }
+        
+        // Если нашли разделитель
+        if (*c) {
+            char separator = *c;
+            *c = '\0';  // Терминируем текущее поле
+            p = c + 1;  // Переходим к следующему полю
+            
+            // Если нашли звёздочку - это конец данных
+            if (separator == '*') {
+                break;
+            }
+        } else {
+            // Конец строки
+            break;
+        }
     }
+    
     return count;
 }
 
 // Парсер GSV (видимые спутники)
 void parseGSV(const char *nmea) {
-    const char *fields[32];
-    int n = splitFields(nmea, fields, 32);
+    // Создаём копию для splitFields (она модифицирует строку)
+    char nmeaCopy[256];
+    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
+    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    
+    char *fields[32];
+    int n = splitFields(nmeaCopy, fields, 32);
     if (n < 4) return;
 
     int total = atoi(fields[3]); // поле 3 = общее число видимых спутников
@@ -441,8 +468,13 @@ void parseGSV(const char *nmea) {
 
 // Парсер GSA (используемые спутники)
 void parseGSA(const char *nmea) {
-    const char *fields[32];
-    int n = splitFields(nmea, fields, 32);
+    // Создаём копию для splitFields (она модифицирует строку)
+    char nmeaCopy[256];
+    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
+    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    
+    char *fields[32];
+    int n = splitFields(nmeaCopy, fields, 32);
     if (n < 15) return;
 
     int count = 0;
@@ -498,8 +530,13 @@ void parseGSA(const char *nmea) {
 
 // Парсер GST для точности
 void parseGST(const char *nmea) {
-    const char *fields[32];
-    int n = splitFields(nmea, fields, 32);
+    // Создаём копию для splitFields (она модифицирует строку)
+    char nmeaCopy[256];
+    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
+    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    
+    char *fields[32];
+    int n = splitFields(nmeaCopy, fields, 32);
     if (n < 9) return;
 
     // Field 7: Lat accuracy
@@ -525,8 +562,13 @@ void parseGST(const char *nmea) {
 
 // Парсер GNS для координат
 void parseGNS(const char *nmea) {
-    const char *fields[32];
-    int n = splitFields(nmea, fields, 32);
+    // Создаём копию для splitFields (она модифицирует строку)
+    char nmeaCopy[256];
+    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
+    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    
+    char *fields[32];
+    int n = splitFields(nmeaCopy, fields, 32);
     if (n < 11) return;
 
     // Field 3: Latitude
