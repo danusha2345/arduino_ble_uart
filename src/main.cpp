@@ -95,7 +95,7 @@ double convertToDecimalDegrees(double ddmm);
 // RING BUFFER IMPLEMENTATION FOR BLE DATA
 // ==============================================
 
-#define RING_BUFFER_SIZE 8192
+#define RING_BUFFER_SIZE 16384  // Увеличен с 8192 до 16384 для NTRIP поправок
 
 // Общий спинлок для секций кольцевого буфера
 static portMUX_TYPE ringbufMux = portMUX_INITIALIZER_UNLOCKED;
@@ -252,6 +252,7 @@ inline void clearRingBuffer() {
 static NimBLECharacteristic *pTxCharacteristic;
 static bool deviceConnected = false;
 static bool oldDeviceConnected = false;
+static uint16_t bleConnHandle = 0xFFFF;  // Handle соединения для отслеживания
 
 // WiFi variables
 const char* ssid = "UM980_GPS_BRIDGE";  // Default AP name
@@ -265,11 +266,22 @@ unsigned long lastWiFiFlush = 0;
 class ServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
         deviceConnected = true;
-        Serial.println("BLE Client connected");
+        bleConnHandle = connInfo.getConnHandle();
+        
+        // Запрашиваем более короткий интервал для лучшей пропускной способности
+        pServer->updateConnParams(bleConnHandle, 6, 12, 0, 400);  // 7.5-15ms интервал
+        
+        Serial.printf("BLE Client connected, handle: %d\n", bleConnHandle);
     }
 
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
         deviceConnected = false;
+        bleConnHandle = 0xFFFF;
+        
+        // Причины разрыва:
+        // 8 = Supervision timeout (переполнение буфера)
+        // 19 = Remote user terminated
+        // 22 = Connection timeout
         Serial.printf("BLE Client disconnected, reason: %d\n", reason);
         
         // Очищаем кольцевой буфер при отключении, только если нет WiFi клиентов
@@ -288,8 +300,12 @@ class ServerCallbacks: public NimBLEServerCallbacks {
             Serial.println("Ring buffer preserved (WiFi clients still connected)");
         }
         
+        // Небольшая задержка перед перезапуском advertising
+        delay(100);
+        
         // Перезапускаем advertising, чтобы устройство снова было видно
         NimBLEDevice::startAdvertising();
+        Serial.println("Advertising restarted");
     }
 };
 
@@ -1254,8 +1270,8 @@ void setup() {
     pAdvertising->setName("um980_2"); // Имя устройства должно быть установлено первым
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
-    // Максимальная скорость - минимальные интервалы
-    pAdvertising->setPreferredParams(0x06, 0x16); // 7.5ms - самый быстрый
+    // Оптимальные интервалы для NTRIP потока
+    pAdvertising->setPreferredParams(0x06, 0x0C); // 7.5-15ms интервал
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
 }
@@ -1347,19 +1363,23 @@ void loop() {
         size_t available = getRingBufferAvailable();
         
         // Оптимизированные условия для отправки данных:
-        // 1. Буфер содержит >= 400 байт (эффективный пакет)
-        // 2. Есть данные и прошло > 10мс с последней отправки (снижение задержки)
-        // 3. Принудительная отправка через 25мс если есть любые данные
+        // 1. Буфер содержит >= 500 байт (эффективный пакет)
+        // 2. Есть данные и прошло > 15мс с последней отправки
+        // 3. Принудительная отправка через 40мс если есть любые данные
+        // 4. Защита от переполнения: принудительная отправка при > 12KB в буфере
         if (available > 0) {
             bool shouldSend = false;
             unsigned long currentTime = millis();
 
-            if (available >= 400) {
+            if (available >= 12288) {
+                shouldSend = true; // КРИТИЧНО: буфер почти полон!
+                Serial.println("WARNING: Buffer near full, forcing send");
+            } else if (available >= 500) {
                 shouldSend = true; // Отправляем большие пакеты сразу
-            } else if (available > 0 && (currentTime - lastBleFlush > 10)) {
-                shouldSend = true; // Отправляем небольшие пакеты через 10мс
-            } else if (available > 0 && (currentTime - lastBleFlush > 25)) {
-                shouldSend = true; // Принудительная отправка через 25мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 15)) {
+                shouldSend = true; // Отправляем небольшие пакеты через 15мс
+            } else if (available > 0 && (currentTime - lastBleFlush > 40)) {
+                shouldSend = true; // Принудительная отправка через 40мс
             }
 
             if (shouldSend) {
@@ -1376,8 +1396,11 @@ void loop() {
                         
                         // Отправляем через BLE, если подключен
                         if (deviceConnected) {
-                            pTxCharacteristic->setValue(bleTempBuffer, boundary);
-                            pTxCharacteristic->notify();
+                            // Проверяем, что соединение активно перед отправкой
+                            if (bleConnHandle != 0xFFFF) {
+                                pTxCharacteristic->setValue(bleTempBuffer, boundary);
+                                pTxCharacteristic->notify();
+                            }
                         }
                         
                         // Отправляем через WiFi, если есть подключенные клиенты
@@ -1398,8 +1421,11 @@ void loop() {
                         
                         // Отправляем через BLE, если подключен
                         if (deviceConnected) {
-                            pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                            pTxCharacteristic->notify();
+                            // Проверяем, что соединение активно перед отправкой
+                            if (bleConnHandle != 0xFFFF) {
+                                pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                                pTxCharacteristic->notify();
+                            }
                         }
                         
                         // Отправляем через WiFi, если есть подключенные клиенты
