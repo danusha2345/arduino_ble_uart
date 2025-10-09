@@ -309,16 +309,19 @@ class ServerCallbacks: public NimBLEServerCallbacks {
     }
 };
 
-// Класс для обработки записи в RX-характеристику
+// Класс для обработки записи в RX-характеристику (NTRIP поправки)
 class RxCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
-            // Отправляем данные в UART1 с добавлением CR LF для модуля UM980
-            SerialPort.write(rxValue.c_str(), rxValue.length());
-            SerialPort.write("\r\n");  // CR LF для корректной обработки команд модулем UM980
-            SerialPort.flush();
+            // Напрямую пересылаем данные в UART1 БЕЗ изменений
+            // NTRIP поправки (RTCM3) - это бинарные данные, не ASCII команды
+            // Добавление \r\n повреждает бинарный поток!
+            SerialPort.write((const uint8_t*)rxValue.c_str(), rxValue.length());
+            
+            // НЕ добавляем flush() - пусть UART буферизует для эффективности
+            // Serial.printf("RX: %d bytes\n", rxValue.length()); // Отладка
         }
     }
 };
@@ -369,13 +372,16 @@ void handleWiFiClients() {
     // Check for data from existing clients
     for (int i = 0; i < 4; i++) {
         if (wifiClientConnected[i] && wifiClients[i].available()) {
-            // Forward data from WiFi client to GPS module (like BLE does)
-            while (wifiClients[i].available()) {
-                char c = wifiClients[i].read();
-                SerialPort.write(&c, 1);
+            // Forward data from WiFi client to GPS module
+            // Читаем пакетами для эффективности
+            uint8_t wifiBuf[512];
+            size_t avail = wifiClients[i].available();
+            if (avail > 0) {
+                if (avail > sizeof(wifiBuf)) avail = sizeof(wifiBuf);
+                size_t bytesRead = wifiClients[i].read(wifiBuf, avail);
+                SerialPort.write(wifiBuf, bytesRead);
+                // НЕ добавляем \r\n для бинарных RTCM3 данных!
             }
-            SerialPort.write("\r\n");  // Add CR LF for UM980 module
-            SerialPort.flush();
         }
         
         // Check if client disconnected
@@ -1232,13 +1238,13 @@ void setup() {
 
     // Настройка безопасности для сопряжения с PIN-кодом
     NimBLEDevice::setSecurityAuth(
-        true, // bonding
-        true, // mitm (man-in-the-middle protection)
-        true  // secure_connections
+        false, // bonding - ОТКЛЮЧЕНО для NTRIP (быстрое переподключение)
+        false, // mitm - ОТКЛЮЧЕНО
+        false  // secure_connections - ОТКЛЮЧЕНО
     );
-    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
-    uint32_t passkey = 123456; // Задаем 6-значный PIN-код
-    NimBLEDevice::setSecurityPasskey(passkey);
+    // Убираем PIN для совместимости с NTRIP клиентами
+    // NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+    // NimBLEDevice::setSecurityPasskey(123456);
 
     // Создание BLE-сервера
     NimBLEServer *pServer = NimBLEDevice::createServer();
