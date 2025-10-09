@@ -309,19 +309,36 @@ class ServerCallbacks: public NimBLEServerCallbacks {
     }
 };
 
-// Класс для обработки записи в RX-характеристику (NTRIP поправки)
+// Класс для обработки записи в RX-характеристику (команды + NTRIP поправки)
 class RxCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
-            // Напрямую пересылаем данные в UART1 БЕЗ изменений
-            // NTRIP поправки (RTCM3) - это бинарные данные, не ASCII команды
-            // Добавление \r\n повреждает бинарный поток!
-            SerialPort.write((const uint8_t*)rxValue.c_str(), rxValue.length());
+            const uint8_t* data = (const uint8_t*)rxValue.c_str();
+            size_t len = rxValue.length();
             
-            // НЕ добавляем flush() - пусть UART буферизует для эффективности
-            // Serial.printf("RX: %d bytes\n", rxValue.length()); // Отладка
+            // Определяем тип данных:
+            // RTCM3 начинается с 0xD3 (211 decimal)
+            // ASCII команды обычно начинаются с букв ($, #, CONFIG, и т.д.)
+            bool isRTCM3 = (len >= 3 && data[0] == 0xD3);
+            
+            // Проверка на ASCII команду: первый символ - буква, $, # или пробел
+            bool isASCII = (len > 0 && 
+                           (data[0] == '$' || data[0] == '#' || 
+                            (data[0] >= 'A' && data[0] <= 'Z') ||
+                            (data[0] >= 'a' && data[0] <= 'z')));
+            
+            // Отправляем данные в UART
+            SerialPort.write(data, len);
+            
+            // Добавляем \r\n только для ASCII команд
+            if (isASCII && !isRTCM3) {
+                SerialPort.write("\r\n");
+                // Serial.printf("RX ASCII cmd: %d bytes + CRLF\n", len);
+            } else {
+                // Serial.printf("RX binary: %d bytes (RTCM3=%d)\n", len, isRTCM3);
+            }
         }
     }
 };
