@@ -1,6 +1,6 @@
-# ESP32-C3 GPS/GNSS to BLE Bridge with Dual Display
+# ESP32-C3/ESP32-S3 GPS/GNSS to BLE Bridge with Dual Display
 
-Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays. **Now supports sending commands to GNSS modules via Bluetooth terminal on your phone!**
+Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data via UART and transmits it over Bluetooth Low Energy (BLE), with real-time visualization on OLED and TFT displays. **Now supports sending commands to GNSS modules via Bluetooth terminal on your phone! Universal compatibility for both ESP32-C3 and ESP32-S3 boards.**
 
 
 <img width="1920" height="2560" alt="photo_2025-09-15_14-08-49" src="https://github.com/user-attachments/assets/6384bac2-2426-4ae1-ac8b-758c5f1b6196" />
@@ -47,58 +47,141 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 
 ## Hardware Requirements
 
-- **ESP32-C3 Super Mini** board
+- **ESP32-C3 Super Mini** OR **ESP32-S3** board
 - **GNSS/GPS module** with UART output (460800 baud)
 - **Optional displays**:
   - OLED SSD1306 I2C (128x64)
   - TFT ST7789V SPI (135x240)
 
+## Supported Boards
+
+### ESP32-C3 (Original Configuration)
+- Uses Arduino_GFX library for TFT display
+- Original pin layout maintained
+- Single-core operation
+
+### ESP32-S3 (Enhanced Configuration) 
+- Uses TFT_eSPI library for better compatibility
+- Dual-core operation (BLE on core 0, data processing on core 1)
+- Improved performance with multi-threading
+- Addressable LED support on GP21
+- Optimized pin layout for boards with GP1-GP18, GP38-GP45 pin ranges
+
 ## Pin Configuration
 
-### UART (GNSS Data)
+### ESP32-C3 Pin Configuration
+
+#### UART (GNSS Data)
 - **GPIO8**: RX (receive from GNSS)
 - **GPIO10**: TX (transmit to GNSS)
 
-### I2C (OLED Display)
+#### I2C (OLED Display)
 - **GPIO3**: SDA
 - **GPIO4**: SCL
 - **Address**: 0x78 (or 0x3C in 7-bit)
 
-### SPI (TFT Display)
+#### SPI (TFT Display)
 - **GPIO0**: SCLK (Clock)
 - **GPIO1**: MOSI (Data)
 - **GPIO2**: DC (Data/Command)
 - **GPIO9**: RST (Reset)
 - **GPIO5**: BL (Backlight)
 
-## Software Requirements
+### ESP32-S3 Pin Configuration (New Layout)
 
-- [PlatformIO](https://platformio.org/) IDE
-- Libraries (auto-installed):
-  - NimBLE-Arduino (v2.3.6+)
-  - Adafruit SSD1306 (v2.5.7+)
-  - Adafruit GFX Library (v1.11.9+)
-  - Arduino_GFX (v1.6.1+ for ST7789V)
-  - TinyGPSPlus (v1.0.3+)
+#### UART (GNSS Data)
+- **GP5**: RX (receive from GNSS)
+- **GP6**: TX (transmit to GNSS)
+
+#### I2C (OLED Display)
+- **GP7**: SDA
+- **GP8**: SCL
+- **Address**: 0x78 (or 0x3C in 7-bit)
+
+#### SPI (TFT Display) - Sequential from GP9
+- **GP9**: RST (Reset)
+- **GP10**: DC (Data/Command)
+- **GP11**: MOSI (Data)
+- **GP12**: SCLK (Clock)
+- **GP13**: BL (Backlight)
+- **CS**: Not used (-1)
+
+#### Addressable LED
+- **GP21**: Addressable LED control
 
 ## Build and Upload
 
-### Using PlatformIO CLI
+### For ESP32-C3
 ```bash
 # Build and upload
-pio run --target upload
+pio run --environment esp32dev --target upload
 
 # Just build
-pio run
+pio run --environment esp32dev
 
 # Monitor serial output
 pio device monitor -b 460800
 ```
 
+### For ESP32-S3
+```bash
+# Build and upload
+pio run --environment esp32s3 --target upload
+
+# Just build
+pio run --environment esp32s3
+
+# Monitor serial output
+pio device monitor -b 460800
+```
+
+## Software Requirements
+
+- [PlatformIO](https://platformio.org/) IDE
+- Libraries (auto-installed per board):
+
+### ESP32-C3 Libraries
+- NimBLE-Arduino (v2.3.6+)
+- Adafruit SSD1306 (v2.5.7+)
+- Adafruit GFX Library (v1.11.9+)
+- **Arduino_GFX (v1.6.1+ for ST7789V)**
+- TinyGPSPlus (v1.0.3+)
+
+### ESP32-S3 Libraries
+- NimBLE-Arduino (v2.3.6+)
+- Adafruit SSD1306 (v2.5.7+)
+- Adafruit GFX Library (v1.11.9+)
+- **TFT_eSPI (v2.5.0+ for ST7789V)**
+- TinyGPSPlus (v1.0.3+)
+
+## Performance Comparison
+
+### ESP32-C3 (Single-Core)
+- **Processor**: RISC-V single-core 160MHz
+- **RAM**: 400KB SRAM
+- **Flash**: 4MB
+- **Operation**: Single-threaded processing
+- **Display Library**: Arduino_GFX
+- **Performance**: Good for basic GNSS bridging
+
+### ESP32-S3 (Dual-Core Enhanced)
+- **Processor**: Xtensa dual-core 240MHz
+- **RAM**: 512KB SRAM + optional PSRAM
+- **Flash**: 8MB+
+- **Operation**: Multi-threaded (BLE on core 0, data on core 1)
+- **Display Library**: TFT_eSPI (optimized)
+- **Performance**: Superior for high-rate GNSS + RTK + multiple clients
+- **Features**: 
+  - Improved throughput with dual-core architecture
+  - Better handling of high-speed NTRIP corrections
+  - Addressable LED support
+  - Enhanced ring buffer management
+
 ### Using VSCode with PlatformIO
 1. Open project folder in VSCode
 2. Wait for PlatformIO to initialize
-3. Click "Upload" button in status bar
+3. Select target environment (esp32dev or esp32s3)
+4. Click "Upload" button in status bar
 
 ## BLE Connection
 `um980_2`
@@ -220,6 +303,15 @@ pio device monitor -b 460800
 
 ## Version History
 
+- **v2.1.0** (2025-10-10) - Universal ESP32-C3/ESP32-S3 support!
+  - Added ESP32-S3 dual-core architecture support
+  - ESP32-S3 uses TFT_eSPI library for better compatibility
+  - ESP32-C3 maintains Arduino_GFX library compatibility
+  - Optimized pin layout for ESP32-S3 boards (GP1-GP18, GP38-GP45)
+  - ESP32-S3: UART on GP5-GP6, sequential pins from GP7
+  - ESP32-S3: Addressable LED support on GP21
+  - Multi-threaded operation on ESP32-S3 (BLE on core 0, data on core 1)
+  - Conditional compilation for universal codebase
 - **v2.0.0** (2025-01-20) - Full bidirectional Bluetooth communication! Send commands to GNSS module via phone
   - Fixed NimBLE-Arduino 2.x callback signatures
   - Resolved "multiple write characteristics" issue

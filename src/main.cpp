@@ -6,14 +6,52 @@
 #include <WiFiClient.h>
 #include <WiFiServer.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <TinyGPS++.h>
-#include <Arduino_GFX_Library.h>
+#include <TinyGPSPlus.h>
 #include <SPI.h>
 
+// Включаем библиотеки дисплеев после базовых
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// Условное включение библиотеки TFT в зависимости от чипа
+#ifdef ESP32_S3
+#include <TFT_eSPI.h>
+#else
+// Для ESP32-C3 используем Arduino_GFX
+#include <Arduino_GFX_Library.h>
+#endif
+
+// Условная настройка пинов в зависимости от чипа
+#ifdef ESP32_S3
+// ESP32-S3 пины (новая планировка)
+// UART пины
+#define UART_RX_PIN  5   // GP5 для UART RX
+#define UART_TX_PIN  6   // GP6 для UART TX
+
+// I2C пины для OLED
+#define SDA_PIN_S3   7   // GP7 для SDA
+#define SCL_PIN_S3   8   // GP8 для SCL
+
+// TFT SPI пины (по порядку от 9)
+#define TFT_CS_PIN    -1   // Не используется
+#define TFT_RST_PIN   9   // GP9 для Reset
+#define TFT_DC_PIN    10  // GP10 для Data/Command
+#define TFT_MOSI_PIN  11  // GP11 для SPI Data
+#define TFT_SCLK_PIN  12  // GP12 для SPI Clock
+#define TFT_BL_PIN    13  // GP13 для Backlight
+
+// Адресный светодиод
+#define LED_PIN       21  // GP21 для адресного светодиода
+
+#else
+// ESP32-C3 пины (оригинальные)
+#define UART_RX_PIN  8   // GPIO8 для UART RX
+#define UART_TX_PIN  10  // GPIO10 для UART TX
+#define SDA_PIN_C3   3   // GPIO3 для SDA
+#define SCL_PIN_C3   4   // GPIO4 для SCL
+#endif
+
 // Используем второй аппаратный UART (Serial1, т.к. Serial0 занят USB)
-// RX-пин: GPIO8, TX-пин: GPIO10
 HardwareSerial SerialPort(1);
 
 // I2C OLED Display настройки
@@ -23,7 +61,32 @@ HardwareSerial SerialPort(1);
 #define SCREEN_ADDRESS 0x78 // I2C адрес дисплея
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// TFT ST7789V Display - Arduino_GFX библиотека
+// Условная инициализация TFT дисплея в зависимости от чипа
+#ifdef ESP32_S3
+// TFT ST7789V Display - TFT_eSPI библиотека с правильными пинами ESP32-S3
+TFT_eSPI tft = TFT_eSPI();
+
+// Цветовые константы для TFT_eSPI
+#define TFT_BLACK   0x0000
+#define TFT_BLUE    0x001F
+#define TFT_RED     0xF800
+#define TFT_GREEN   0x07E0
+#define TFT_CYAN    0x07FF
+#define TFT_MAGENTA 0xF81F
+#define TFT_YELLOW  0xFFE0
+#define TFT_WHITE   0xFFFF
+
+// Макросы для унификации вызовов TFT_eSPI
+#define TFT_BEGIN()        tft.begin()
+#define TFT_FILL_SCREEN(c) tft.fillScreen(c)
+#define TFT_SET_CURSOR(x,y) tft.setCursor(x,y)
+#define TFT_SET_TEXT_SIZE(s) tft.setTextSize(s)
+#define TFT_SET_TEXT_COLOR(c) tft.setTextColor(c)
+#define TFT_PRINT(text)    tft.print(text)
+#define TFT_FILL_RECT(x,y,w,h,c) tft.fillRect(x,y,w,h,c)
+
+#else
+// TFT ST7789V Display - Arduino_GFX библиотека для ESP32-C3
 // Пины подключения: GPIO0=SCLK, GPIO1=MOSI, GPIO2=DC, GPIO9=RST, GPIO5=BL
 #define TFT_CS    -1  // Не используется
 #define TFT_RST    9  // Reset pin
@@ -47,12 +110,28 @@ Arduino_GFX *tft = new Arduino_ST7789(bus, TFT_RST, 1 /* rotation 90° */, true 
 #define TFT_WHITE   WHITE
 #define TFT_ORANGE  ORANGE
 
+// Макросы для унификации вызовов Arduino_GFX
+#define TFT_BEGIN()        tft->begin()
+#define TFT_FILL_SCREEN(c) tft->fillScreen(c)
+#define TFT_SET_CURSOR(x,y) tft->setCursor(x,y)
+#define TFT_SET_TEXT_SIZE(s) tft->setTextSize(s)
+#define TFT_SET_TEXT_COLOR(c) tft->setTextColor(c)
+#define TFT_PRINT(text)    tft->print(text)
+#define TFT_FILL_RECT(x,y,w,h,c) tft->fillRect(x,y,w,h,c)
+
+#endif
+
 // GPS
 TinyGPSPlus gps;
 
-// I2C пины для ESP32-C3
-#define SDA_PIN 3
-#define SCL_PIN 4
+// Условные I2C пины
+#ifdef ESP32_S3
+#define SDA_PIN SDA_PIN_S3
+#define SCL_PIN SCL_PIN_S3
+#else
+#define SDA_PIN SDA_PIN_C3
+#define SCL_PIN SCL_PIN_C3
+#endif
 
 // Информация о спутниках для каждой системы
 struct SatInfo {
@@ -817,7 +896,7 @@ void clearDisplayLine(int lineNum, bool isOled) {
         display.fillRect(0, oledLines[lineNum].y, SCREEN_WIDTH, OLED_LINE_HEIGHT, SSD1306_BLACK);
     } else if (!isOled && lineNum < MAX_TFT_LINES) {
         // Очищаем конкретную область строки в TFT
-        tft->fillRect(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
+        TFT_FILL_RECT(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
     }
 }
 
@@ -848,10 +927,10 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
             display.setTextColor(lines[lineNum].color);
             display.print(newText);
         } else {
-            tft->setCursor(lines[lineNum].x, lines[lineNum].y);
-            tft->setTextSize(lines[lineNum].textSize);
-            tft->setTextColor(lines[lineNum].color);
-            tft->print(newText);
+            TFT_SET_CURSOR(lines[lineNum].x, lines[lineNum].y);
+            TFT_SET_TEXT_SIZE(lines[lineNum].textSize);
+            TFT_SET_TEXT_COLOR(lines[lineNum].color);
+            TFT_PRINT(newText);
         }
         
         return true; // Строка была обновлена
@@ -1234,25 +1313,40 @@ void setup() {
         display.display();
     }
 
-    // Инициализация SPI и TFT дисплея с кастомной конфигурацией
-    pinMode(TFT_BL, OUTPUT); // TFT_BL = GPIO5
+    // Инициализация SPI и TFT дисплея с условными пинами
+#ifdef ESP32_S3
+    pinMode(TFT_BL_PIN, OUTPUT); // Подсветка TFT для ESP32-S3 (GP13)
+    digitalWrite(TFT_BL_PIN, HIGH); // Включаем подсветку
+#else
+    pinMode(TFT_BL, OUTPUT); // Подсветка TFT для ESP32-C3
     digitalWrite(TFT_BL, HIGH); // Включаем подсветку
+#endif
     
-    // Инициализируем TFT с Arduino_GFX библиотекой
-    tft->begin();
-    tft->fillScreen(TFT_BLACK);
-    tft->setTextColor(TFT_WHITE);
-    tft->setTextSize(2);
+    // Инициализируем TFT с соответствующей библиотекой
+    TFT_BEGIN();
+    TFT_FILL_SCREEN(TFT_BLACK);
+    TFT_SET_TEXT_COLOR(TFT_WHITE);
+    TFT_SET_TEXT_SIZE(2);
     
     // Инициализируем состояния дисплеев для корректной работы частичных обновлений
     initializeDisplayStates();
     
+#ifdef ESP32_S3
+    // Инициализация адресного светодиода
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, HIGH); // Включаем адресный светодиод
+    Serial.println("Addressable LED initialized on GP21");
+#endif
+    
     // НЕ выводим текст при инициализации - пусть updateDisplay() сам управляет экраном
+#ifdef ESP32_S3
+    Serial.println("TFT Display initialized with TFT_eSPI!");
+#else
     Serial.println("TFT Display initialized with Arduino_GFX!");
+#endif
 
-    // Запускаем UART1 для передачи данных
-    // RX = 8, TX = 10
-    SerialPort.begin(460800, SERIAL_8N1, 8, 10);
+    // Запускаем UART1 для передачи данных с условными пинами
+    SerialPort.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
     // Инициализация BLE
     NimBLEDevice::init("UM980_C3_GPS");
@@ -1598,3 +1692,165 @@ void loop() {
     oldWifiConnected = currentWifiConnected;
 #endif  // ESP32_S3
 }
+
+// ==============================================
+// ESP32-S3 DUAL-CORE TASK IMPLEMENTATIONS
+// ==============================================
+#ifdef ESP32_S3
+
+// BLE Task: Отправка данных через BLE и WiFi
+void bleTask(void* parameter) {
+    Serial.println("BLE Task started on core 0");
+    
+    while (bleTaskRunning) {
+        bool hasAnyConnection = deviceConnected; // BLE connected
+        for (int i = 0; i < 4; i++) {
+            if (wifiClientConnected[i]) {
+                hasAnyConnection = true;
+                break;
+            }
+        }
+
+        if (hasAnyConnection) {
+            size_t available = getRingBufferAvailable();
+            
+            // АГРЕССИВНАЯ отправка для максимальной пропускной способности
+            if (available > 0) {
+                bool shouldSend = false;
+                unsigned long currentTime = millis();
+
+                if (available >= 12288) {
+                    shouldSend = true; // КРИТИЧЕСКО: буфер почти полон!
+                    Serial.println("WARNING: Buffer near full, forcing send");
+                } else if (available >= 400) {
+                    shouldSend = true; // Отправляем большие пакеты сразу
+                } else if (available > 0 && (currentTime - lastBleFlush > 7)) {
+                    shouldSend = true; // Быстрая отправка через 7мс
+                } else if (available > 0 && (currentTime - lastBleFlush > 20)) {
+                    shouldSend = true; // Принудительная отправка через 20мс
+                }
+
+                if (shouldSend) {
+                    size_t toRead = (available > 480) ? 480 : available;
+                    size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
+
+                    if (bytesRead > 0) {
+                        // Отправляем через BLE, если подключен
+                        if (deviceConnected && bleConnHandle != 0xFFFF) {
+                            pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                            pTxCharacteristic->notify();
+                        }
+                        
+                        // Отправляем через WiFi, если есть подключенные клиенты
+                        for (int i = 0; i < 4; i++) {
+                            if (wifiClientConnected[i]) {
+                                sendWiFiData(bleTempBuffer, bytesRead);
+                            }
+                        }
+                        
+                        lastBleFlush = currentTime;
+
+                        // Логирование переполнения буфера
+                        if (getRingBufferOverflow()) {
+                            Serial.println("WARNING: Ring buffer overflow occurred!");
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Небольшая задержка для экономии ресурсов
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    
+    Serial.println("BLE Task ended");
+    vTaskDelete(NULL);
+}
+
+// Data Task: Прием данных из UART, парсинг GPS, обработка RX
+void dataTask(void* parameter) {
+    Serial.println("Data Task started on core 1");
+    static uint8_t uartReadBuffer[256];
+    
+    while (dataTaskRunning) {
+        // Чтение данных из UART1
+        int bytesAvailable = SerialPort.available();
+        if (bytesAvailable > 0) {
+            int bytesToRead = (bytesAvailable > 256) ? 256 : bytesAvailable;
+            int bytesRead = SerialPort.readBytes(uartReadBuffer, bytesToRead);
+            
+            // Записываем в кольцевой буфер, если есть подключения
+            bool hasAnyConnection = deviceConnected; // BLE connected
+            for (int i = 0; i < 4; i++) {
+                if (wifiClientConnected[i]) {
+                    hasAnyConnection = true;
+                    break;
+                }
+            }
+            
+            if (hasAnyConnection && bytesRead > 0) {
+                writeToRingBuffer(uartReadBuffer, bytesRead);
+            }
+            
+            // Парсинг GPS данных
+            for (int i = 0; i < bytesRead; i++) {
+                char c = uartReadBuffer[i];
+                
+                // Собираем NMEA строку для парсинга
+                nmeaBuffer += c;
+                if (c == '\n') {
+                    parseNMEA(nmeaBuffer.c_str());
+                    nmeaBuffer = "";
+                }
+                
+                // Парсим через TinyGPS++
+                if (gps.encode(c)) {
+                    if (gps.location.isValid()) {
+                        gpsData.latitude = gps.location.lat();
+                        gpsData.longitude = gps.location.lng();
+                        gpsData.valid = true;
+                        gpsData.lastUpdate = millis();
+                        if (tzAuto) {
+                            tzOffsetMinutes = estimateOffsetMinutesFromLongitude(gpsData.longitude);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ОБРАБОТКА ВХОДЯЩИХ BLE RX ДАННЫХ
+        size_t rxAvailable = bleRxBuffer.available();
+        if (rxAvailable > 0) {
+            size_t toRead = (rxAvailable > sizeof(rxTempBuffer)) ? sizeof(rxTempBuffer) : rxAvailable;
+            size_t rxRead = bleRxBuffer.read(rxTempBuffer, toRead);
+            
+            if (rxRead > 0) {
+                // Определяем тип данных
+                bool isRTCM3 = (rxRead >= 3 && rxTempBuffer[0] == 0xD3);
+                bool isASCII = (rxRead > 0 && 
+                               (rxTempBuffer[0] == '$' || rxTempBuffer[0] == '#' || 
+                                (rxTempBuffer[0] >= 'A' && rxTempBuffer[0] <= 'Z') ||
+                                (rxTempBuffer[0] >= 'a' && rxTempBuffer[0] <= 'z')));
+                
+                // Отправляем в UART
+                SerialPort.write(rxTempBuffer, rxRead);
+                
+                // Добавляем \r\n только для ASCII команд
+                if (isASCII && !isRTCM3) {
+                    SerialPort.write("\r\n");
+                }
+            }
+        }
+        
+        // Проверка таймаутов данных
+        checkDataTimeouts();
+        
+        // Небольшая задержка
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    
+    Serial.println("Data Task ended");
+    vTaskDelete(NULL);
+}
+
+#endif  // ESP32_S3
