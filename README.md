@@ -303,7 +303,7 @@ pio device monitor -b 460800
 
 ## Version History
 
-- **v2.1.0** (2025-10-10) - Universal ESP32-C3/ESP32-S3 support!
+- **v2.5.0** (2025-10-10) - Universal ESP32-C3/ESP32-S3 support!
   - Added ESP32-S3 dual-core architecture support
   - ESP32-S3 uses TFT_eSPI library for better compatibility
   - ESP32-C3 maintains Arduino_GFX library compatibility

@@ -40,6 +40,7 @@ sdkconfig.old
 *.log
 debug.log
 serial_output.txt
+serial_*.txt
 *.pcap
 
 # Temporary files
@@ -70,13 +71,22 @@ Desktop.ini
 *.swp
 *.swo
 
-# Python (if using scripts)
+# Claude/AI assistant files
+.claude/
+CLAUDE.md
+ESP32-S3.md
+NIMBLE_UPGRADE.md
+WARP.md
+
+# Python virtual environments
+.venv/
+venv/
+env/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
