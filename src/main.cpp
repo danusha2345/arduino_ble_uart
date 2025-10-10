@@ -213,6 +213,101 @@ static unsigned long lastBleFlush = 0;
 static RingBuffer bleRxBuffer;  // Отдельный буфер для RX
 static uint8_t rxTempBuffer[512];
 
+// ==============================================
+// ESP32-S3 DUAL-CORE OPTIMIZATION
+// ==============================================
+#ifdef ESP32_S3
+// Хэндлы задач для многопоточности
+TaskHandle_t bleTaskHandle = NULL;
+TaskHandle_t dataTaskHandle = NULL;
+
+// Флаги для синхронизации
+volatile bool bleTaskRunning = false;
+volatile bool dataTaskRunning = false;
+
+// Функция задачи BLE на ядре 0 (отправка данных)
+void bleTask(void* parameter) {
+    Serial.println("BLE Task started on Core 0");
+    bleTaskRunning = true;
+    
+    while (bleTaskRunning) {
+        // Отправляем данные через BLE
+        if (deviceConnected) {
+            size_t available = getRingBufferAvailable();
+            if (available >= 400) {  // Отправляем при накоплении 400+ байт
+                size_t toRead = (available > 480) ? 480 : available;
+                uint8_t localBuffer[480];
+                size_t bytesRead = readFromRingBuffer(localBuffer, toRead);
+                
+                if (bytesRead > 0 && bleConnHandle != 0xFFFF) {
+                    pTxCharacteristic->setValue(localBuffer, bytesRead);
+                    pTxCharacteristic->notify();
+                }
+            }
+        }
+        
+        // Небольшая задержка для предотвращения загрузки CPU
+        vTaskDelay(pdMS_TO_TICKS(5));  // 5ms между проверками
+    }
+    
+    vTaskDelete(NULL);
+}
+
+// Функция задачи обработки данных на ядре 1 (прием, парсинг)
+void dataTask(void* parameter) {
+    Serial.println("Data Task started on Core 1");
+    dataTaskRunning = true;
+    
+    static uint8_t uartReadBuffer[256];
+    
+    while (dataTaskRunning) {
+        // Обработка входящих BLE RX данных
+        size_t rxAvailable = bleRxBuffer.available();
+        if (rxAvailable > 0) {
+            size_t toRead = (rxAvailable > sizeof(rxTempBuffer)) ? sizeof(rxTempBuffer) : rxAvailable;
+            size_t rxRead = bleRxBuffer.read(rxTempBuffer, toRead);
+            
+            if (rxRead > 0) {
+                bool isRTCM3 = (rxRead >= 3 && rxTempBuffer[0] == 0xD3);
+                bool isASCII = (rxRead > 0 && 
+                               (rxTempBuffer[0] == '$' || rxTempBuffer[0] == '#' || 
+                                (rxTempBuffer[0] >= 'A' && rxTempBuffer[0] <= 'Z') ||
+                                (rxTempBuffer[0] >= 'a' && rxTempBuffer[0] <= 'z')));
+                
+                SerialPort.write(rxTempBuffer, rxRead);
+                
+                if (isASCII && !isRTCM3) {
+                    SerialPort.write("\r\n");
+                }
+            }
+        }
+        
+        // Чтение данных из UART
+        int bytesAvailable = SerialPort.available();
+        if (bytesAvailable > 0) {
+            int bytesToRead = (bytesAvailable > 256) ? 256 : bytesAvailable;
+            int bytesRead = SerialPort.readBytes(uartReadBuffer, bytesToRead);
+            
+            bool hasAnyConnection = deviceConnected;
+            for (int i = 0; i < 4; i++) {
+                if (wifiClientConnected[i]) {
+                    hasAnyConnection = true;
+                    break;
+                }
+            }
+            
+            if (hasAnyConnection && bytesRead > 0) {
+                writeToRingBuffer(uartReadBuffer, bytesRead);
+            }
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(2));  // 2ms между циклами
+    }
+    
+    vTaskDelete(NULL);
+}
+#endif  // ESP32_S3
+
 // Функция для поиска последней границы NMEA сообщения в буфере
 size_t findLastNmeaBoundary(const uint8_t* buffer, size_t length) {
     // Ищем последнее вхождение "\r\n" в буфере
@@ -1287,6 +1382,37 @@ void setup() {
     pAdvertising->setPreferredParams(0x06, 0x0C); // 7.5-15ms интервал
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
+    
+#ifdef ESP32_S3
+    // ESP32-S3: Запускаем многопоточность
+    Serial.println("ESP32-S3 detected: Starting dual-core tasks...");
+    
+    // BLE задача на ядре 0 (отправка)
+    xTaskCreatePinnedToCore(
+        bleTask,           // Функция задачи
+        "BLE_Task",        // Имя
+        8192,              // Размер стека
+        NULL,              // Параметры
+        2,                 // Приоритет (высокий для BLE)
+        &bleTaskHandle,    // Хэндл
+        0                  // Ядро 0
+    );
+    
+    // Задача обработки данных на ядре 1 (прием, парсинг)
+    xTaskCreatePinnedToCore(
+        dataTask,          // Функция задачи
+        "Data_Task",       // Имя
+        8192,              // Размер стека
+        NULL,              // Параметры
+        1,                 // Приоритет (нормальный)
+        &dataTaskHandle,   // Хэндл
+        1                  // Ядро 1
+    );
+    
+    Serial.println("Dual-core tasks started successfully!");
+#else
+    Serial.println("ESP32-C3: Running in single-core mode");
+#endif
 }
 
 void checkDataTimeouts() {
@@ -1309,6 +1435,59 @@ void checkDataTimeouts() {
 }
 
 void loop() {
+#ifdef ESP32_S3
+    // На ESP32-S3 основная работа в отдельных задачах
+    // loop() только обрабатывает парсинг GPS, WiFi и дисплеи
+    static uint8_t uartReadBuffer[256];
+    
+    int bytesAvailable = SerialPort.available();
+    if (bytesAvailable > 0) {
+        int bytesToRead = (bytesAvailable > 256) ? 256 : bytesAvailable;
+        int bytesRead = SerialPort.readBytes(uartReadBuffer, bytesToRead);
+        
+        // Парсим GPS данные для дисплея (без записи в буфер - этим занимается dataTask)
+        for (int i = 0; i < bytesRead; i++) {
+            char c = uartReadBuffer[i];
+            
+            // Собираем NMEA строку для парсинга точности
+            nmeaBuffer += c;
+            if (c == '\n') {
+                parseNMEA(nmeaBuffer.c_str());
+                nmeaBuffer = "";
+            }
+            
+            // Парсим GPS данные через TinyGPS++
+            if (gps.encode(c)) {
+                if (gps.location.isValid()) {
+                    gpsData.latitude = gps.location.lat();
+                    gpsData.longitude = gps.location.lng();
+                    gpsData.valid = true;
+                    gpsData.lastUpdate = millis();
+                    if (tzAuto) {
+                        tzOffsetMinutes = estimateOffsetMinutesFromLongitude(gpsData.longitude);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Обработка WiFi клиентов
+    handleWiFiClients();
+    
+    // Проверка таймаутов
+    checkDataTimeouts();
+    
+    // Обновление дисплеев
+    static unsigned long lastDisplayUpdate = 0;
+    if (millis() - lastDisplayUpdate > 1000) {
+        updateDisplay();
+        lastDisplayUpdate = millis();
+    }
+    
+    delay(1);  // Минимальная задержка
+    
+#else
+    // ESP32-C3: Полная обработка в одном потоке
     // Оптимизированное чтение и обработка GPS данных
     static uint8_t uartReadBuffer[256]; // Буфер для пакетного чтения UART
     
@@ -1490,4 +1669,5 @@ void loop() {
         Serial.println("WiFi client connected");
     }
     oldWifiConnected = currentWifiConnected;
+#endif  // ESP32_S3
 }
