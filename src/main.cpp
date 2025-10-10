@@ -225,87 +225,9 @@ TaskHandle_t dataTaskHandle = NULL;
 volatile bool bleTaskRunning = false;
 volatile bool dataTaskRunning = false;
 
-// Функция задачи BLE на ядре 0 (отправка данных)
-void bleTask(void* parameter) {
-    Serial.println("BLE Task started on Core 0");
-    bleTaskRunning = true;
-    
-    while (bleTaskRunning) {
-        // Отправляем данные через BLE
-        if (deviceConnected) {
-            size_t available = getRingBufferAvailable();
-            if (available >= 400) {  // Отправляем при накоплении 400+ байт
-                size_t toRead = (available > 480) ? 480 : available;
-                uint8_t localBuffer[480];
-                size_t bytesRead = readFromRingBuffer(localBuffer, toRead);
-                
-                if (bytesRead > 0 && bleConnHandle != 0xFFFF) {
-                    pTxCharacteristic->setValue(localBuffer, bytesRead);
-                    pTxCharacteristic->notify();
-                }
-            }
-        }
-        
-        // Небольшая задержка для предотвращения загрузки CPU
-        vTaskDelay(pdMS_TO_TICKS(5));  // 5ms между проверками
-    }
-    
-    vTaskDelete(NULL);
-}
-
-// Функция задачи обработки данных на ядре 1 (прием, парсинг)
-void dataTask(void* parameter) {
-    Serial.println("Data Task started on Core 1");
-    dataTaskRunning = true;
-    
-    static uint8_t uartReadBuffer[256];
-    
-    while (dataTaskRunning) {
-        // Обработка входящих BLE RX данных
-        size_t rxAvailable = bleRxBuffer.available();
-        if (rxAvailable > 0) {
-            size_t toRead = (rxAvailable > sizeof(rxTempBuffer)) ? sizeof(rxTempBuffer) : rxAvailable;
-            size_t rxRead = bleRxBuffer.read(rxTempBuffer, toRead);
-            
-            if (rxRead > 0) {
-                bool isRTCM3 = (rxRead >= 3 && rxTempBuffer[0] == 0xD3);
-                bool isASCII = (rxRead > 0 && 
-                               (rxTempBuffer[0] == '$' || rxTempBuffer[0] == '#' || 
-                                (rxTempBuffer[0] >= 'A' && rxTempBuffer[0] <= 'Z') ||
-                                (rxTempBuffer[0] >= 'a' && rxTempBuffer[0] <= 'z')));
-                
-                SerialPort.write(rxTempBuffer, rxRead);
-                
-                if (isASCII && !isRTCM3) {
-                    SerialPort.write("\r\n");
-                }
-            }
-        }
-        
-        // Чтение данных из UART
-        int bytesAvailable = SerialPort.available();
-        if (bytesAvailable > 0) {
-            int bytesToRead = (bytesAvailable > 256) ? 256 : bytesAvailable;
-            int bytesRead = SerialPort.readBytes(uartReadBuffer, bytesToRead);
-            
-            bool hasAnyConnection = deviceConnected;
-            for (int i = 0; i < 4; i++) {
-                if (wifiClientConnected[i]) {
-                    hasAnyConnection = true;
-                    break;
-                }
-            }
-            
-            if (hasAnyConnection && bytesRead > 0) {
-                writeToRingBuffer(uartReadBuffer, bytesRead);
-            }
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(2));  // 2ms между циклами
-    }
-    
-    vTaskDelete(NULL);
-}
+// Forward declarations for tasks (functions defined after global variables)
+void bleTask(void* parameter);
+void dataTask(void* parameter);
 #endif  // ESP32_S3
 
 // Функция для поиска последней границы NMEA сообщения в буфере
@@ -603,10 +525,11 @@ void parseGSA(const char *nmea) {
     if (n < 15) return;
 
     int count = 0;
-    // поля 4–15 = PRN используемых спутников
+    // поля 3–14 = PRN используемых спутников (индексы с 0)
     for (int i = 3; i <= 14 && i < n; i++) {
-        if (fields[i] && *fields[i] != '\0' && *fields[i] != ',')
+        if (fields[i] && strlen(fields[i]) > 0) {
             count++;
+        }
     }
     unsigned long now = millis();
 
@@ -756,8 +679,12 @@ void parseGNS(const char *nmea) {
     }
     
     // Field 8: Number of satellites
-    if (fields[7] && *fields[7]) {
-        gpsData.satellites = atoi(fields[7]);
+    // ВАЖНО: парсим количество спутников ТОЛЬКО из GNGNS (комбинированное),
+    // игнорируем GPGNS/GLGNS/GAGNS/GBGNS, чтобы не перезаписать общее количество
+    if (strncmp(nmea, "$GNGNS", 6) == 0) {
+        if (fields[7] && *fields[7]) {
+            gpsData.satellites = atoi(fields[7]);
+        }
     }
     
     // Field 10: Altitude
@@ -819,10 +746,10 @@ String getFixTypeString(int quality) {
         case 0: return "NO FIX";
         case 1: return "GPS";
         case 2: return "DGPS";
-        case 3: return "HIGH PREC"; // High precision (Precise)
-        case 4: return "RTK FIXED";
-        case 5: return "RTK FLOAT";
-        case 6: return "ESTIMATED"; // резерв под возможные источники вне GNS
+        case 3: return "PREC";      // High precision (Precise) - сокращено
+        case 4: return "RTK-FIX";   // RTK FIXED - сокращено
+        case 5: return "RTK-FLT";   // RTK FLOAT - сокращено
+        case 6: return "EST";       // ESTIMATED - сокращено
         case 7: return "MANUAL";
         case 8: return "SIM";
         default: return "UNKNOWN";
@@ -1328,7 +1255,7 @@ void setup() {
     SerialPort.begin(460800, SERIAL_8N1, 8, 10);
 
     // Инициализация BLE
-    NimBLEDevice::init("um980_2");
+    NimBLEDevice::init("UM980_C3_GPS");
 
 
     // Увеличиваем MTU для максимальной скорости
@@ -1338,15 +1265,15 @@ void setup() {
     NimBLEDevice::setPower(9); // 9 dBm - максимальная мощность
 
     // Настройка безопасности для сопряжения с PIN-кодом
-    // Отключаем для максимальной совместимости и производительности
+    // ВКЛЮЧАЕМ для безопасности
     NimBLEDevice::setSecurityAuth(
-        false, // bonding - ОТКЛЮЧЕНО для быстрого переподключения
-        false, // mitm - ОТКЛЮЧЕНО
-        false  // secure_connections - ОТКЛЮЧЕНО
+        true,  // bonding - ВКЛЮЧЕНО для запоминания устройств
+        true,  // mitm - ВКЛЮЧЕНО (Man-in-the-middle protection)
+        true   // secure_connections - ВКЛЮЧЕНО
     );
-    // PIN не используется для упрощения подключения
-    // NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
-    // NimBLEDevice::setSecurityPasskey(123456);
+    // PIN-код для сопряжения
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+    NimBLEDevice::setSecurityPasskey(123456);
 
     // Создание BLE-сервера
     NimBLEServer *pServer = NimBLEDevice::createServer();
@@ -1375,7 +1302,7 @@ void setup() {
 
     // Настройка и запуск advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-    pAdvertising->setName("um980_2"); // Имя устройства должно быть установлено первым
+    pAdvertising->setName("UM980_C3_GPS"); // Имя устройства должно быть установлено первым
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
     // Оптимальные интервалы для NTRIP потока
