@@ -44,17 +44,8 @@ jobs:
 
       # 7. Create a new GitHub Release and upload the compiled firmware files for both boards
       - name: Create Release and Upload Firmware
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v1
         with:
-          # Include firmware files for both ESP32-C3 and ESP32-S3
-          artifacts: |
-            .pio/build/esp32dev/firmware.bin
-            .pio/build/esp32dev/partitions.bin
-            .pio/build/esp32dev/bootloader.bin
-            .pio/build/esp32s3/firmware.bin
-            .pio/build/esp32s3/partitions.bin
-            .pio/build/esp32s3/bootloader.bin
-          
           # Custom release name
           name: ${{ steps.release_name.outputs.name }}
           
@@ -65,14 +56,14 @@ jobs:
             ### 📦 Firmware Files
             
             **ESP32-C3 (Single-Core)**
-            - `firmware.bin` - Main firmware file
-            - `bootloader.bin` - Bootloader
-            - `partitions.bin` - Partition table
+            - `firmware-esp32c3.bin` - Main firmware file
+            - `bootloader-esp32c3.bin` - Bootloader
+            - `partitions-esp32c3.bin` - Partition table
             
             **ESP32-S3 (Dual-Core Enhanced)**
-            - `firmware.bin` - Main firmware file  
-            - `bootloader.bin` - Bootloader
-            - `partitions.bin` - Partition table
+            - `firmware-esp32s3.bin` - Main firmware file  
+            - `bootloader-esp32s3.bin` - Bootloader
+            - `partitions-esp32s3.bin` - Partition table
             
             ### 🚀 What's New
             Universal support for both ESP32-C3 and ESP32-S3 boards with optimized performance!
@@ -84,5 +75,17 @@ jobs:
             
             🔗 [Full Documentation](https://github.com/your-repo/blob/main/README.md)
           
+          # Upload renamed firmware files with board prefixes
+          files: |
+            .pio/build/esp32dev/firmware.bin#firmware-esp32c3.bin
+            .pio/build/esp32dev/bootloader.bin#bootloader-esp32c3.bin
+            .pio/build/esp32dev/partitions.bin#partitions-esp32c3.bin
+            .pio/build/esp32s3/firmware.bin#firmware-esp32s3.bin
+            .pio/build/esp32s3/bootloader.bin#bootloader-esp32s3.bin
+            .pio/build/esp32s3/partitions.bin#partitions-esp32s3.bin
+          
           # The action will use the tag name as the release tag.
           token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Make this the latest release
+          prerelease: false
