@@ -208,6 +208,11 @@ static RingBuffer bleRingBuffer;
 static uint8_t bleTempBuffer[480]; // Размер меньше MTU для целых NMEA строк
 static unsigned long lastBleFlush = 0;
 
+// Буфер для входящих BLE RX данных (NTRIP поправки + команды)
+#define RX_BUFFER_SIZE 4096
+static RingBuffer bleRxBuffer;  // Отдельный буфер для RX
+static uint8_t rxTempBuffer[512];
+
 // Функция для поиска последней границы NMEA сообщения в буфере
 size_t findLastNmeaBoundary(const uint8_t* buffer, size_t length) {
     // Ищем последнее вхождение "\r\n" в буфере
@@ -310,35 +315,19 @@ class ServerCallbacks: public NimBLEServerCallbacks {
 };
 
 // Класс для обработки записи в RX-характеристику (команды + NTRIP поправки)
+// КРИТИЧНО: должен быть МАКСИМАЛЬНО БЫСТРЫМ! Просто копируем в буфер и выходим.
 class RxCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
+            // БЫСТРО копируем в очередь RX и СРАЗУ выходим
+            // Обработка будет в main loop, не блокируя BLE стек
             const uint8_t* data = (const uint8_t*)rxValue.c_str();
             size_t len = rxValue.length();
             
-            // Определяем тип данных:
-            // RTCM3 начинается с 0xD3 (211 decimal)
-            // ASCII команды обычно начинаются с букв ($, #, CONFIG, и т.д.)
-            bool isRTCM3 = (len >= 3 && data[0] == 0xD3);
-            
-            // Проверка на ASCII команду: первый символ - буква, $, # или пробел
-            bool isASCII = (len > 0 && 
-                           (data[0] == '$' || data[0] == '#' || 
-                            (data[0] >= 'A' && data[0] <= 'Z') ||
-                            (data[0] >= 'a' && data[0] <= 'z')));
-            
-            // Отправляем данные в UART
-            SerialPort.write(data, len);
-            
-            // Добавляем \r\n только для ASCII команд
-            if (isASCII && !isRTCM3) {
-                SerialPort.write("\r\n");
-                // Serial.printf("RX ASCII cmd: %d bytes + CRLF\n", len);
-            } else {
-                // Serial.printf("RX binary: %d bytes (RTCM3=%d)\n", len, isRTCM3);
-            }
+            // Записываем в RX буфер (thread-safe)
+            bleRxBuffer.write(data, len);
         }
     }
 };
@@ -438,6 +427,10 @@ void sendWiFiData(const uint8_t* data, size_t length) {
 
 // Оптимизированная функция парсинга NMEA для получения точности и спутников
 // Использует только операции с C-строками, без объектов String
+// Единый статический буфер для парсинга NMEA (вместо локальных копий в каждом парсере)
+// Экономит стек и уменьшает нагрузку на память при интенсивной обработке
+static char nmeaParseBuffer[256];
+
 // Вспомогательная функция для разделения NMEA строки на поля
 // Модифицирует строку, заменяя запятые и звёздочки на '\0'
 // ВАЖНО: требует модифицируемую копию строки!
@@ -475,13 +468,12 @@ static int splitFields(char *nmea, char *fields[], int maxFields) {
 
 // Парсер GSV (видимые спутники)
 void parseGSV(const char *nmea) {
-    // Создаём копию для splitFields (она модифицирует строку)
-    char nmeaCopy[256];
-    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
-    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    // Используем общий статический буфер (экономия стека)
+    strncpy(nmeaParseBuffer, nmea, sizeof(nmeaParseBuffer) - 1);
+    nmeaParseBuffer[sizeof(nmeaParseBuffer) - 1] = '\0';
     
     char *fields[32];
-    int n = splitFields(nmeaCopy, fields, 32);
+    int n = splitFields(nmeaParseBuffer, fields, 32);
     if (n < 4) return;
 
     int total = atoi(fields[3]); // поле 3 = общее число видимых спутников
@@ -507,13 +499,12 @@ void parseGSV(const char *nmea) {
 
 // Парсер GSA (используемые спутники)
 void parseGSA(const char *nmea) {
-    // Создаём копию для splitFields (она модифицирует строку)
-    char nmeaCopy[256];
-    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
-    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    // Используем общий статический буфер (экономия стека)
+    strncpy(nmeaParseBuffer, nmea, sizeof(nmeaParseBuffer) - 1);
+    nmeaParseBuffer[sizeof(nmeaParseBuffer) - 1] = '\0';
     
     char *fields[32];
-    int n = splitFields(nmeaCopy, fields, 32);
+    int n = splitFields(nmeaParseBuffer, fields, 32);
     if (n < 15) return;
 
     int count = 0;
@@ -569,13 +560,12 @@ void parseGSA(const char *nmea) {
 
 // Парсер GST для точности
 void parseGST(const char *nmea) {
-    // Создаём копию для splitFields (она модифицирует строку)
-    char nmeaCopy[256];
-    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
-    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    // Используем общий статический буфер (экономия стека)
+    strncpy(nmeaParseBuffer, nmea, sizeof(nmeaParseBuffer) - 1);
+    nmeaParseBuffer[sizeof(nmeaParseBuffer) - 1] = '\0';
     
     char *fields[32];
-    int n = splitFields(nmeaCopy, fields, 32);
+    int n = splitFields(nmeaParseBuffer, fields, 32);
     if (n < 9) return;
 
     // Field 7: Lat accuracy
@@ -601,13 +591,12 @@ void parseGST(const char *nmea) {
 
 // Парсер GNS для координат
 void parseGNS(const char *nmea) {
-    // Создаём копию для splitFields (она модифицирует строку)
-    char nmeaCopy[256];
-    strncpy(nmeaCopy, nmea, sizeof(nmeaCopy) - 1);
-    nmeaCopy[sizeof(nmeaCopy) - 1] = '\0';
+    // Используем общий статический буфер (экономия стека)
+    strncpy(nmeaParseBuffer, nmea, sizeof(nmeaParseBuffer) - 1);
+    nmeaParseBuffer[sizeof(nmeaParseBuffer) - 1] = '\0';
     
     char *fields[32];
-    int n = splitFields(nmeaCopy, fields, 32);
+    int n = splitFields(nmeaParseBuffer, fields, 32);
     if (n < 11) return;
 
     // Field 3: Latitude
@@ -1371,6 +1360,33 @@ void loop() {
         }
     }
 
+    // ОБРАБОТКА ВХОДЯЩИХ BLE RX ДАННЫХ (NTRIP поправки + команды)
+    // Обрабатываем в main loop, не блокируя BLE callback
+    size_t rxAvailable = bleRxBuffer.available();
+    if (rxAvailable > 0) {
+        size_t toRead = (rxAvailable > sizeof(rxTempBuffer)) ? sizeof(rxTempBuffer) : rxAvailable;
+        size_t rxRead = bleRxBuffer.read(rxTempBuffer, toRead);
+        
+        if (rxRead > 0) {
+            // Определяем тип данных:
+            // RTCM3 начинается с 0xD3 (211 decimal)
+            // ASCII команды начинаются с букв ($, #, A-Z, a-z)
+            bool isRTCM3 = (rxRead >= 3 && rxTempBuffer[0] == 0xD3);
+            bool isASCII = (rxRead > 0 && 
+                           (rxTempBuffer[0] == '$' || rxTempBuffer[0] == '#' || 
+                            (rxTempBuffer[0] >= 'A' && rxTempBuffer[0] <= 'Z') ||
+                            (rxTempBuffer[0] >= 'a' && rxTempBuffer[0] <= 'z')));
+            
+            // Отправляем данные в UART
+            SerialPort.write(rxTempBuffer, rxRead);
+            
+            // Добавляем \r\n только для ASCII команд
+            if (isASCII && !isRTCM3) {
+                SerialPort.write("\r\n");
+            }
+        }
+    }
+    
     // Обработка WiFi клиентов (проверяем подключения и получаем команды)
     handleWiFiClients();
 
@@ -1413,58 +1429,23 @@ void loop() {
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
 
                 if (bytesRead > 0) {
-                    // Интеллектуальная отправка: ищем границу NMEA сообщений
-                    size_t boundary = findLastNmeaBoundary(bleTempBuffer, bytesRead);
-
-                    if (boundary > 0) {
-                        // Найдена граница NMEA - отправляем только целые сообщения
-                        
-                        // Отправляем через BLE, если подключен
-                        if (deviceConnected) {
-                            // Проверяем, что соединение активно перед отправкой
-                            if (bleConnHandle != 0xFFFF) {
-                                pTxCharacteristic->setValue(bleTempBuffer, boundary);
-                                pTxCharacteristic->notify();
-                            }
-                        }
-                        
-                        // Отправляем через WiFi, если есть подключенные клиенты
-                        for (int i = 0; i < 4; i++) {
-                            if (wifiClientConnected[i]) {
-                                sendWiFiData(bleTempBuffer, boundary);
-                            }
-                        }
-                        
-                        lastBleFlush = currentTime;
-
-                        // Возвращаем неотправленные данные обратно в буфер
-                        if (boundary < bytesRead) {
-                            writeToRingBuffer(bleTempBuffer + boundary, bytesRead - boundary);
-                        }
-                    } else if (currentTime - lastBleFlush > 50) {
-                        // Принудительная отправка через 50мс даже без границы NMEA
-                        
-                        // Отправляем через BLE, если подключен
-                        if (deviceConnected) {
-                            // Проверяем, что соединение активно перед отправкой
-                            if (bleConnHandle != 0xFFFF) {
-                                pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
-                                pTxCharacteristic->notify();
-                            }
-                        }
-                        
-                        // Отправляем через WiFi, если есть подключенные клиенты
-                        for (int i = 0; i < 4; i++) {
-                            if (wifiClientConnected[i]) {
-                                sendWiFiData(bleTempBuffer, bytesRead);
-                            }
-                        }
-                        
-                        lastBleFlush = currentTime;
-                    } else {
-                        // Нет границы NMEA и не истекло время - возвращаем данные в буфер
-                        writeToRingBuffer(bleTempBuffer, bytesRead);
+                    // УПРОЩЁННАЯ ОТПРАВКА: просто отправляем данные без возврата в буфер
+                    // Поиск границ NMEA для исходящих не нужен - данные и так построчные
+                    
+                    // Отправляем через BLE, если подключен
+                    if (deviceConnected && bleConnHandle != 0xFFFF) {
+                        pTxCharacteristic->setValue(bleTempBuffer, bytesRead);
+                        pTxCharacteristic->notify();
                     }
+                    
+                    // Отправляем через WiFi, если есть подключенные клиенты
+                    for (int i = 0; i < 4; i++) {
+                        if (wifiClientConnected[i]) {
+                            sendWiFiData(bleTempBuffer, bytesRead);
+                        }
+                    }
+                    
+                    lastBleFlush = currentTime;
 
                     // Логирование переполнения буфера
                     if (getRingBufferOverflow()) {
