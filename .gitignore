@@ -135,3 +135,6 @@ test_results/
 # Core dumps
 core
 core.*
+
+# Release build artifacts
+release/

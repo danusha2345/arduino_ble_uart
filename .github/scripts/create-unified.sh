@@ -33,11 +33,11 @@ print(pad)
 
 # Create ESP32-C3 unified firmware
 echo "Creating ESP32-C3 unified firmware..."
-if [ -f ".pio/build/esp32dev/bootloader.bin" ] && [ -f ".pio/build/esp32dev/partitions.bin" ] && [ -f ".pio/build/esp32dev/firmware.bin" ]; then
+if [ -f ".pio/build/esp32-c3/bootloader.bin" ] && [ -f ".pio/build/esp32-c3/partitions.bin" ] && [ -f ".pio/build/esp32-c3/firmware.bin" ]; then
     # Get sizes
-    bootloader_size=$(get_size_hex ".pio/build/esp32dev/bootloader.bin")
-    partitions_size=$(get_size_hex ".pio/build/esp32dev/partitions.bin")
-    firmware_size=$(get_size_hex ".pio/build/esp32dev/firmware.bin")
+    bootloader_size=$(get_size_hex ".pio/build/esp32-c3/bootloader.bin")
+    partitions_size=$(get_size_hex ".pio/build/esp32-c3/partitions.bin")
+    firmware_size=$(get_size_hex ".pio/build/esp32-c3/firmware.bin")
     
     # Calculate offsets (standard ESP32 layout)
     bootloader_offset="0x0000"
@@ -47,25 +47,17 @@ if [ -f ".pio/build/esp32dev/bootloader.bin" ] && [ -f ".pio/build/esp32dev/part
     # Create unified firmware
     (
         # Add bootloader with padding
-        cat .pio/build/esp32dev/bootloader.bin
-        python3 -c "
-import struct
-padding_size = $((0x8000 - $bootloader_size)))
-padding = b'\xFF' * padding_size
-print(padding)
+        cat .pio/build/esp32-c3/bootloader.bin
+        python3 -c "import sys; sys.stdout.buffer.write(b'\xFF' * $((0x8000 - $(stat -c%s .pio/build/esp32-c3/bootloader.bin))))
 "
         
         # Add partitions with padding
-        cat .pio/build/esp32dev/partitions.bin
-        python3 -c "
-import struct
-padding_size = $((0x10000 - 0x8000 - $partitions_size)))
-padding = b'\xFF' * padding_size
-print(padding)
+        cat .pio/build/esp32-c3/partitions.bin
+        python3 -c "import sys; sys.stdout.buffer.write(b'\xFF' * $((0x10000 - 0x8000 - $(stat -c%s .pio/build/esp32-c3/partitions.bin))))
 "
         
         # Add firmware
-        cat .pio/build/esp32dev/firmware.bin
+        cat .pio/build/esp32-c3/firmware.bin
     ) > release/unified-esp32c3.bin
     
     # Create info file
@@ -84,9 +76,9 @@ Flashing with esptool:
 esptool.py write_flash 0x0 unified-esp32c3.bin
 
 Or flash components separately:
-esptool.py write_flash 0x0 .pio/build/esp32dev/bootloader.bin
-esptool.py write_flash 0x8000 .pio/build/esp32dev/partitions.bin
-esptool.py write_flash 0x10000 .pio/build/esp32dev/firmware.bin
+esptool.py write_flash 0x0 .pio/build/esp32-c3/bootloader.bin
+esptool.py write_flash 0x8000 .pio/build/esp32-c3/partitions.bin
+esptool.py write_flash 0x10000 .pio/build/esp32-c3/firmware.bin
 EOF
     
     echo "✓ Created ESP32-C3 unified firmware"
@@ -96,11 +88,11 @@ fi
 
 # Create ESP32-S3 unified firmware  
 echo "Creating ESP32-S3 unified firmware..."
-if [ -f ".pio/build/esp32s3/bootloader.bin" ] && [ -f ".pio/build/esp32s3/partitions.bin" ] && [ -f ".pio/build/esp32s3/firmware.bin" ]; then
+if [ -f ".pio/build/esp32-s3/bootloader.bin" ] && [ -f ".pio/build/esp32-s3/partitions.bin" ] && [ -f ".pio/build/esp32-s3/firmware.bin" ]; then
     # Get sizes
-    bootloader_size=$(get_size_hex ".pio/build/esp32s3/bootloader.bin")
-    partitions_size=$(get_size_hex ".pio/build/esp32s3/partitions.bin")
-    firmware_size=$(get_size_hex ".pio/build/esp32s3/firmware.bin")
+    bootloader_size=$(get_size_hex ".pio/build/esp32-s3/bootloader.bin")
+    partitions_size=$(get_size_hex ".pio/build/esp32-s3/partitions.bin")
+    firmware_size=$(get_size_hex ".pio/build/esp32-s3/firmware.bin")
     
     # Calculate offsets
     bootloader_offset="0x0000"
@@ -110,25 +102,17 @@ if [ -f ".pio/build/esp32s3/bootloader.bin" ] && [ -f ".pio/build/esp32s3/partit
     # Create unified firmware
     (
         # Add bootloader with padding
-        cat .pio/build/esp32s3/bootloader.bin
-        python3 -c "
-import struct
-padding_size = $((0x8000 - $bootloader_size)))
-padding = b'\xFF' * padding_size
-print(padding)
+        cat .pio/build/esp32-s3/bootloader.bin
+        python3 -c "import sys; sys.stdout.buffer.write(b'\xFF' * $((0x8000 - $(stat -c%s .pio/build/esp32-s3/bootloader.bin))))
 "
         
         # Add partitions with padding
-        cat .pio/build/esp32s3/partitions.bin
-        python3 -c "
-import struct
-padding_size = $((0x10000 - 0x8000 - $partitions_size)))
-padding = b'\xFF' * padding_size
-print(padding)
+        cat .pio/build/esp32-s3/partitions.bin
+        python3 -c "import sys; sys.stdout.buffer.write(b'\xFF' * $((0x10000 - 0x8000 - $(stat -c%s .pio/build/esp32-s3/partitions.bin))))
 "
         
         # Add firmware
-        cat .pio/build/esp32s3/firmware.bin
+        cat .pio/build/esp32-s3/firmware.bin
     ) > release/unified-esp32s3.bin
     
     # Create info file
@@ -147,9 +131,9 @@ Flashing with esptool:
 esptool.py write_flash 0x0 unified-esp32s3.bin
 
 Or flash components separately:
-esptool.py write_flash 0x0 .pio/build/esp32s3/bootloader.bin
-esptool.py write_flash 0x8000 .pio/build/esp32s3/partitions.bin
-esptool.py write_flash 0x10000 .pio/build/esp32s3/firmware.bin
+esptool.py write_flash 0x0 .pio/build/esp32-s3/bootloader.bin
+esptool.py write_flash 0x8000 .pio/build/esp32-s3/partitions.bin
+esptool.py write_flash 0x10000 .pio/build/esp32-s3/firmware.bin
 EOF
     
     echo "✓ Created ESP32-S3 unified firmware"
@@ -161,18 +145,18 @@ fi
 echo "Creating individual renamed files..."
 
 # ESP32-C3
-if [ -f ".pio/build/esp32dev/firmware.bin" ]; then
-    cp .pio/build/esp32dev/firmware.bin release/firmware-esp32c3.bin
-    cp .pio/build/esp32dev/bootloader.bin release/bootloader-esp32c3.bin
-    cp .pio/build/esp32dev/partitions.bin release/partitions-esp32c3.bin
+if [ -f ".pio/build/esp32-c3/firmware.bin" ]; then
+    cp .pio/build/esp32-c3/firmware.bin release/firmware-esp32c3.bin
+    cp .pio/build/esp32-c3/bootloader.bin release/bootloader-esp32c3.bin
+    cp .pio/build/esp32-c3/partitions.bin release/partitions-esp32c3.bin
     echo "✓ Copied ESP32-C3 individual files"
 fi
 
 # ESP32-S3
-if [ -f ".pio/build/esp32s3/firmware.bin" ]; then
-    cp .pio/build/esp32s3/firmware.bin release/firmware-esp32s3.bin
-    cp .pio/build/esp32s3/bootloader.bin release/bootloader-esp32s3.bin
-    cp .pio/build/esp32s3/partitions.bin release/partitions-esp32s3.bin
+if [ -f ".pio/build/esp32-s3/firmware.bin" ]; then
+    cp .pio/build/esp32-s3/firmware.bin release/firmware-esp32s3.bin
+    cp .pio/build/esp32-s3/bootloader.bin release/bootloader-esp32s3.bin
+    cp .pio/build/esp32-s3/partitions.bin release/partitions-esp32s3.bin
     echo "✓ Copied ESP32-S3 individual files"
 fi
 

@@ -31,11 +31,11 @@ jobs:
 
       # 4. Build for ESP32-C3
       - name: Build ESP32-C3 Firmware
-        run: pio run --environment esp32dev
+        run: pio run --environment esp32-c3
 
       # 5. Build for ESP32-S3
       - name: Build ESP32-S3 Firmware
-        run: pio run --environment esp32s3
+        run: pio run --environment esp32-s3
 
       # 6. Prepare release files with proper naming
       - name: Prepare Release Files
@@ -113,21 +113,21 @@ jobs:
             - `bootloader-esp32s3.bin` - Bootloader (0x0000)
             - `partitions-esp32s3.bin` - Partition table (0x8000)
             
-            ### 🎯 What's New in v2.5.0
+            ### 🎯 What's New
             
             - 🔄 **Universal Support**: Both ESP32-C3 and ESP32-S3 boards
-            - ⚡ **ESP32-S3 Dual-Core**: BLE on core 0, data on core 1
-            - 📍 **Optimized Pins**: ESP32-S3 sequential layout (GP5-GP13)
-            - 💡 **Addressable LED**: Support on ESP32-S3 (GP21)
+            - ⚡ **Updated Platform**: PlatformIO espressif32@6.12.0
+            - 📚 **Library Updates**: Arduino_GFX 1.4.7, NimBLE 2.3.6
             - 🔧 **Unified Firmware**: Single-file flashing with proper offsets
-            - 📚 **Complete Docs**: Full installation instructions
+            - 🛠️ **Dual Environment Build**: Separate builds for C3 and S3
+            - 📋 **Complete Docs**: Full installation instructions
             
             ### 📋 Installation
             
             **Easy Method:**
             1. Download the unified firmware file for your board
             2. Flash using the command above
-            3. Select board type in platformio.ini (`esp32dev` or `esp32s3`)
+            3. Board type is already selected in the firmware
             
             **Advanced Method:**
             1. Download individual files
