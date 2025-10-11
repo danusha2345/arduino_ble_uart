@@ -40,21 +40,47 @@ jobs:
       # 6. Prepare release files with proper naming
       - name: Prepare Release Files
         run: |
-          chmod +x .github/scripts/prepare-release.sh
-          .github/scripts/prepare-release.sh
+          chmod +x .github/scripts/create-unified.sh
+          .github/scripts/create-unified.sh
 
       # 7. List final release files
       - name: List Release Files
         run: |
-          echo "Final files to upload:"
-          ls -la release/
+          echo "Unified firmware files:"
+          ls -lh release/unified*.bin || echo "No unified files"
+          echo ""
+          echo "Individual files:"
+          ls -lh release/*-esp32*.bin || echo "No individual files"
+          echo ""
+          echo "Info files:"
+          cat release/*-info.txt || echo "No info files"
 
-      # 8. Create Release Name based on tag
+      # 8. Display firmware sizes and flashing info
+      - name: Display Firmware Information
+        run: |
+          if [ -f "release/unified-esp32c3.bin" ]; then
+            echo "## ESP32-C3 Firmware"
+            echo "Size: $(du -h release/unified-esp32c3.bin | cut -f1)"
+            echo "Flash command: esptool.py write_flash 0x0 unified-esp32c3.bin"
+            echo ""
+          fi
+          
+          if [ -f "release/unified-esp32s3.bin" ]; then
+            echo "## ESP32-S3 Firmware"
+            echo "Size: $(du -h release/unified-esp32s3.bin | cut -f1)"
+            echo "Flash command: esptool.py write_flash 0x0 unified-esp32s3.bin"
+            echo ""
+          fi
+          
+          echo "## Individual Files (Alternative) "
+          echo "Download individual files if you prefer separate flashing"
+
+      # 9. Create Release Name based on tag
       - name: Generate Release Name
         id: release_name
         run: echo "name=Firmware ${{ github.ref_name }}" >> $GITHUB_OUTPUT
 
-      # 9. Create a new GitHub Release and upload firmware files
+      # 10. Create a new GitHub Release and upload firmware files
       - name: Create Release and Upload Firmware
         uses: softprops/action-gh-release@v1
         with:
@@ -65,30 +91,56 @@ jobs:
           body: |
             ## Universal ESP32-C3/ESP32-S3 GPS/GNSS to BLE Bridge
             
-            ### 📦 Firmware Files
+            ### 🚀 Quick Flash (Recommended)
             
             **ESP32-C3 (Single-Core)**
-            - `firmware-esp32c3.bin` - Main firmware file
-            - `bootloader-esp32c3.bin` - Bootloader
-            - `partitions-esp32c3.bin` - Partition table
+            - Download: `unified-esp32c3.bin`
+            - Flash: `esptool.py write_flash 0x0 unified-esp32c3.bin`
             
-            **ESP32-S3 (Dual-Core Enhanced)**
-            - `firmware-esp32s3.bin` - Main firmware file  
-            - `bootloader-esp32s3.bin` - Bootloader
-            - `partitions-esp32s3.bin` - Partition table
+            **ESP32-S3 (Dual-Core Enhanced)**  
+            - Download: `unified-esp32s3.bin`
+            - Flash: `esptool.py write_flash 0x0 unified-esp32s3.bin`
             
-            ### 🚀 What's New
-            Universal support for both ESP32-C3 and ESP32-S3 boards with optimized performance!
+            ### 📦 Individual Files (Advanced)
+            
+            **ESP32-C3**
+            - `firmware-esp32c3.bin` - Main firmware (0x10000)
+            - `bootloader-esp32c3.bin` - Bootloader (0x0000)
+            - `partitions-esp32c3.bin` - Partition table (0x8000)
+            
+            **ESP32-S3**
+            - `firmware-esp32s3.bin` - Main firmware (0x10000)
+            - `bootloader-esp32s3.bin` - Bootloader (0x0000)
+            - `partitions-esp32s3.bin` - Partition table (0x8000)
+            
+            ### 🎯 What's New in v2.5.0
+            
+            - 🔄 **Universal Support**: Both ESP32-C3 and ESP32-S3 boards
+            - ⚡ **ESP32-S3 Dual-Core**: BLE on core 0, data on core 1
+            - 📍 **Optimized Pins**: ESP32-S3 sequential layout (GP5-GP13)
+            - 💡 **Addressable LED**: Support on ESP32-S3 (GP21)
+            - 🔧 **Unified Firmware**: Single-file flashing with proper offsets
+            - 📚 **Complete Docs**: Full installation instructions
             
             ### 📋 Installation
-            1. Download the appropriate firmware files for your board
-            2. Flash using esptool.py or PlatformIO
+            
+            **Easy Method:**
+            1. Download the unified firmware file for your board
+            2. Flash using the command above
             3. Select board type in platformio.ini (`esp32dev` or `esp32s3`)
+            
+            **Advanced Method:**
+            1. Download individual files
+            2. Flash bootloader first (0x0), then partitions (0x8000), then firmware (0x10000)
+            3. Configure board accordingly
             
             🔗 [Full Documentation](https://github.com/your-repo/blob/main/README.md)
           
-          # Upload release files from release/ directory
-          files: release/*
+          # Upload both unified and individual firmware files
+          files: |
+            release/unified-*.bin
+            release/*-esp32*.bin
+            release/*-info.txt
           
           # The action will use the tag name as the release tag.
           token: ${{ secrets.GITHUB_TOKEN }}
