@@ -146,7 +146,9 @@ jobs:
           # Upload both unified and individual firmware files
           files: |
             release/unified-*.bin
-            release/*-esp32*.bin
+            release/bootloader-*.bin
+            release/firmware-esp32*.bin
+            release/partitions-*.bin
             release/*-info.txt
           
           # The action will use the tag name as the release tag.
