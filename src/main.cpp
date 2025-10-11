@@ -17,7 +17,7 @@
 #ifdef ESP32_S3
 #include <TFT_eSPI.h>
 #else
-// Для ESP32-C3 используем Arduino_GFX
+// Для ESP32-C3 используем Arduino_GFX (работает и компилируется)
 #include <Arduino_GFX_Library.h>
 #endif
 
@@ -86,7 +86,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define TFT_FILL_RECT(x,y,w,h,c) tft.fillRect(x,y,w,h,c)
 
 #else
-// TFT ST7789V Display - Arduino_GFX библиотека для ESP32-C3
+// TFT ST7789V Display - Arduino_GFX библиотека для ESP32-C3 (рабочая версия)
 // Пины подключения: GPIO0=SCLK, GPIO1=MOSI, GPIO2=DC, GPIO9=RST, GPIO5=BL
 #define TFT_CS    -1  // Не используется
 #define TFT_RST    9  // Reset pin
