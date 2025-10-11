@@ -37,29 +37,24 @@ jobs:
       - name: Build ESP32-S3 Firmware
         run: pio run --environment esp32s3
 
-      # 5. List built firmware files for debugging
-      - name: List built files
+      # 6. Prepare release files with proper naming
+      - name: Prepare Release Files
         run: |
-          echo "ESP32-C3 files:"
-          ls -la .pio/build/esp32dev/*.bin || echo "No ESP32-C3 files found"
-          echo "ESP32-S3 files:"
-          ls -la .pio/build/esp32s3/*.bin || echo "No ESP32-S3 files found"
+          chmod +x .github/scripts/prepare-release.sh
+          .github/scripts/prepare-release.sh
 
-      # 6. Create Release Name based on tag
+      # 7. List final release files
+      - name: List Release Files
+        run: |
+          echo "Final files to upload:"
+          ls -la release/
+
+      # 8. Create Release Name based on tag
       - name: Generate Release Name
         id: release_name
         run: echo "name=Firmware ${{ github.ref_name }}" >> $GITHUB_OUTPUT
 
-      # 7. Upload firmware files with proper paths
-      - name: Upload Firmware Files
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-files
-          path: |
-            .pio/build/esp32dev/
-            .pio/build/esp32s3/
-
-      # 8. Create a new GitHub Release and upload the compiled firmware files for both boards
+      # 9. Create a new GitHub Release and upload firmware files
       - name: Create Release and Upload Firmware
         uses: softprops/action-gh-release@v1
         with:
@@ -92,14 +87,8 @@ jobs:
             
             🔗 [Full Documentation](https://github.com/your-repo/blob/main/README.md)
           
-          # Upload firmware files with board prefixes
-          files: |
-            .pio/build/esp32dev/firmware.bin:firmware-esp32c3.bin
-            .pio/build/esp32dev/bootloader.bin:bootloader-esp32c3.bin
-            .pio/build/esp32dev/partitions.bin:partitions-esp32c3.bin
-            .pio/build/esp32s3/firmware.bin:firmware-esp32s3.bin
-            .pio/build/esp32s3/bootloader.bin:bootloader-esp32s3.bin
-            .pio/build/esp32s3/partitions.bin:partitions-esp32s3.bin
+          # Upload release files from release/ directory
+          files: release/*
           
           # The action will use the tag name as the release tag.
           token: ${{ secrets.GITHUB_TOKEN }}
