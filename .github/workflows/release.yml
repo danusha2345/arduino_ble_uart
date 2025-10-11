@@ -29,6 +29,12 @@ jobs:
       - name: Install PlatformIO
         run: pip install -U platformio
 
+      # 3.5. Clean library cache to ensure correct versions
+      - name: Clean PlatformIO Cache
+        run: |
+          pio pkg uninstall --global "moononournation/GFX Library for Arduino" || true
+          pio pkg uninstall --global "GFX Library for Arduino" || true
+
       # 4. Build for ESP32-C3
       - name: Build ESP32-C3 Firmware
         run: pio run --environment esp32-c3
