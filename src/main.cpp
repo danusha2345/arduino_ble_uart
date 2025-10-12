@@ -900,7 +900,7 @@ void clearDisplayLine(int lineNum, bool isOled) {
         // Очищаем конкретную область строки в OLED
         display.fillRect(0, oledLines[lineNum].y, SCREEN_WIDTH, OLED_LINE_HEIGHT, SSD1306_BLACK);
     } 
-#ifndef ESP32_S3  // TFT temporarily disabled for ESP32-S3
+#ifndef ESP32_S3  // TFT disabled for ESP32-S3 (requires physical display)
     else if (!isOled && lineNum < MAX_TFT_LINES) {
         // Очищаем конкретную область строки в TFT
         TFT_FILL_RECT(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
@@ -935,7 +935,7 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
             display.setTextColor(lines[lineNum].color);
             display.print(newText);
         } 
-#ifndef ESP32_S3  // TFT temporarily disabled for ESP32-S3
+#ifndef ESP32_S3  // TFT disabled for ESP32-S3 (requires physical display)
         else {
             TFT_SET_CURSOR(lines[lineNum].x, lines[lineNum].y);
             TFT_SET_TEXT_SIZE(lines[lineNum].textSize);
@@ -1326,9 +1326,21 @@ void setup() {
     }
 
     // Инициализация SPI и TFT дисплея с условными пинами
-    // TODO: TFT требует отладки, временно отключен для ESP32-S3
 #ifdef ESP32_S3
-    Serial.println("TFT Display initialization SKIPPED - needs debugging");
+    // ESP32-S3: TFT требует физического подключения дисплея
+    // Временно отключен для избежания краша при отсутствии дисплея
+    pinMode(TFT_BL_PIN, OUTPUT);
+    digitalWrite(TFT_BL_PIN, HIGH); // Включаем подсветку на всякий случай
+    
+    Serial.println("TFT Display: Requires physical connection (currently disabled)");
+    // TODO: Раскомментируйте следующие строки после подключения TFT дисплея:
+    // SPI.begin(TFT_SCLK_PIN, -1, TFT_MOSI_PIN, -1); // Явная инициализация SPI
+    // tft.init();
+    // tft.setRotation(1); // Landscape mode
+    // tft.fillScreen(TFT_BLACK);
+    // tft.setTextColor(TFT_WHITE);
+    // tft.setTextSize(2);
+    // Serial.println("TFT Display initialized with TFT_eSPI!");
 #else
     pinMode(TFT_BL, OUTPUT); // Подсветка TFT для ESP32-C3
     digitalWrite(TFT_BL, HIGH); // Включаем подсветку

@@ -75,8 +75,9 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 - **Features**:
   - Multi-threaded operation for better performance
   - Fixed bootloop issue with corrected platformio.ini settings
-  - TFT temporarily disabled (requires additional SPI setup)
+  - ⚠️ TFT disabled (requires physical display connection)
   - Addressable LED support on GPIO21
+  - OLED display fully working on GPIO1/2
 - **Documentation**: See [ESP32-S3-ZERO_PIN_CONNECTIONS.md](ESP32-S3-ZERO_PIN_CONNECTIONS.md) for detailed wiring
 
 ## Pin Configuration
@@ -112,14 +113,14 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 - **Address**: 0x3C (or 0x78 in 8-bit)
 - **Status**: ✅ Working
 
-#### SPI (TFT Display) - Temporarily Disabled
+#### SPI (TFT Display) - Disabled (Requires Physical Connection)
 - **GPIO9**: DC (Data/Command)
 - **GPIO10**: RST (Reset)
 - **GPIO11**: MOSI (Data)
 - **GPIO12**: SCLK (Clock)
 - **GPIO13**: BL (Backlight)
 - **CS**: Not used (-1)
-- **Status**: ⏸️ Disabled (requires additional SPI initialization)
+- **Status**: ⚠️ **Disabled** - TFT_eSPI requires physical display. Uncomment initialization code in firmware when display is connected.
 
 #### Built-in Peripherals
 - **GPIO21**: WS2812 RGB LED (built-in)
