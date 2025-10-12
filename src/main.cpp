@@ -1427,7 +1427,12 @@ void setup() {
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
     // Оптимальные интервалы для NTRIP потока
-    pAdvertising->setPreferredParams(0x06, 0x0C); // 7.5-15ms интервал
+#ifdef ESP32_S3
+    // ESP32-S3: Более агрессивные интервалы для максимальной скорости
+    pAdvertising->setPreferredParams(0x03, 0x06); // 3.75-7.5ms интервал (двойная скорость)
+#else
+    pAdvertising->setPreferredParams(0x06, 0x0C); // 7.5-15ms интервал для ESP32-C3
+#endif
     NimBLEDevice::startAdvertising();
     Serial.println("Advertising started. Waiting for a client connection...");
     
@@ -1647,16 +1652,25 @@ void loop() {
                 Serial.println("WARNING: Buffer near full, forcing send");
             } else if (available >= 400) {
                 shouldSend = true; // Отправляем большие пакеты сразу
+#ifdef ESP32_S3
+            } else if (available > 0 && (currentTime - lastBleFlush > 4)) {
+                shouldSend = true; // ESP32-S3: отправка через 4мс (быстрее)
+#else
             } else if (available > 0 && (currentTime - lastBleFlush > 7)) {
-                shouldSend = true; // Быстрая отправка через 7мс
+                shouldSend = true; // ESP32-C3: отправка через 7мс
+#endif
             } else if (available > 0 && (currentTime - lastBleFlush > 20)) {
                 shouldSend = true; // Принудительная отправка через 20мс
             }
 
             if (shouldSend) {
                 // Читаем максимально возможное количество данных для эффективности
-                // MTU-3 = ~514 байт, но используем 480 для безопасности + границы NMEA
-                size_t toRead = (available > 480) ? 480 : available;
+                // MTU-3 = ~514 байт, используем 500 для максимальной пропускной способности
+#ifdef ESP32_S3
+                size_t toRead = (available > 500) ? 500 : available; // ESP32-S3: больше за раз
+#else
+                size_t toRead = (available > 480) ? 480 : available; // ESP32-C3: консервативно
+#endif
                 size_t bytesRead = readFromRingBuffer(bleTempBuffer, toRead);
 
                 if (bytesRead > 0) {
@@ -1876,8 +1890,12 @@ void dataTask(void* parameter) {
         // Проверка таймаутов данных
         checkDataTimeouts();
         
-        // Небольшая задержка
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // Задержка: минимальная для ESP32-S3, 1ms для ESP32-C3
+#ifdef ESP32_S3
+        taskYIELD(); // ESP32-S3: просто отдаем управление, без задержки
+#else
+        vTaskDelay(pdMS_TO_TICKS(1)); // ESP32-C3: 1ms задержка
+#endif
     }
     
     Serial.println("Data Task ended");
