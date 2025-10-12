@@ -55,17 +55,29 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 
 ## Supported Boards
 
-### ESP32-C3 (Original Configuration)
-- Uses Arduino_GFX library for TFT display
-- Original pin layout maintained
-- Single-core operation
+### ESP32-C3 Super Mini (Original Configuration)
+- **Display library**: Arduino_GFX for TFT display
+- **Architecture**: Single-core RISC-V @ 160MHz
+- **Pin layout**: Original ESP32-C3 pin configuration
+- **Network names**: 
+  - WiFi AP: `UM980_GPS_BRIDGE`
+  - BLE Device: `UM980_C3_GPS`
+- **Memory**: RAM 24.8% (81KB/327KB), Flash 78.5% (1028KB/1310KB)
 
-### ESP32-S3 (Enhanced Configuration) 
-- Uses TFT_eSPI library for better compatibility
-- Dual-core operation (BLE on core 0, data processing on core 1)
-- Improved performance with multi-threading
-- Addressable LED support on GP21
-- Optimized pin layout for boards with GP1-GP18, GP38-GP45 pin ranges
+### ESP32-S3-Zero (Enhanced Configuration) 
+- **Display library**: TFT_eSPI for better S3 compatibility
+- **Architecture**: Dual-core Xtensa @ 240MHz (BLE on core 0, data on core 1)
+- **Pin layout**: Optimized for ESP32-S3-Zero (4MB Flash + 2MB PSRAM)
+- **Network names**: 
+  - WiFi AP: `UM980_GPS_BRIDGE_S3`
+  - BLE Device: `UM980_S3_GPS`
+- **Memory**: RAM 26.9% (88KB/327KB), Flash 76.7% (1005KB/1310KB)
+- **Features**:
+  - Multi-threaded operation for better performance
+  - Fixed bootloop issue with corrected platformio.ini settings
+  - TFT temporarily disabled (requires additional SPI setup)
+  - Addressable LED support on GPIO21
+- **Documentation**: See [ESP32-S3-ZERO_PIN_CONNECTIONS.md](ESP32-S3-ZERO_PIN_CONNECTIONS.md) for detailed wiring
 
 ## Pin Configuration
 
@@ -87,27 +99,37 @@ Advanced **bidirectional** positioning data bridge that receives GPS/GNSS data v
 - **GPIO9**: RST (Reset)
 - **GPIO5**: BL (Backlight)
 
-### ESP32-S3 Pin Configuration (New Layout)
+### ESP32-S3-Zero Pin Configuration
 
-#### UART (GNSS Data)
-- **GP5**: RX (receive from GNSS)
-- **GP6**: TX (transmit to GNSS)
+#### UART1 (GNSS Data)
+- **GPIO5**: RX (receive from GNSS)
+- **GPIO6**: TX (transmit to GNSS)
+- **Baud**: 460800
 
 #### I2C (OLED Display)
-- **GP7**: SDA
-- **GP8**: SCL
-- **Address**: 0x78 (or 0x3C in 7-bit)
+- **GPIO1**: SCL (Clock)
+- **GPIO2**: SDA (Data)
+- **Address**: 0x3C (or 0x78 in 8-bit)
+- **Status**: ✅ Working
 
-#### SPI (TFT Display) - Sequential from GP9
-- **GP9**: RST (Reset)
-- **GP10**: DC (Data/Command)
-- **GP11**: MOSI (Data)
-- **GP12**: SCLK (Clock)
-- **GP13**: BL (Backlight)
+#### SPI (TFT Display) - Temporarily Disabled
+- **GPIO9**: DC (Data/Command)
+- **GPIO10**: RST (Reset)
+- **GPIO11**: MOSI (Data)
+- **GPIO12**: SCLK (Clock)
+- **GPIO13**: BL (Backlight)
 - **CS**: Not used (-1)
+- **Status**: ⏸️ Disabled (requires additional SPI initialization)
 
-#### Addressable LED
-- **GP21**: Addressable LED control
+#### Built-in Peripherals
+- **GPIO21**: WS2812 RGB LED (built-in)
+- **GPIO43/44**: USB CDC Serial (built-in, used for debugging)
+
+#### Reserved Pins
+- **GPIO33-37**: Used by Octal PSRAM (do not use)
+- **GPIO43-44**: USB Serial/JTAG (do not use)
+
+See [ESP32-S3-ZERO_PIN_CONNECTIONS.md](ESP32-S3-ZERO_PIN_CONNECTIONS.md) for complete wiring diagrams and free GPIO list.
 
 ## Build and Upload
 
@@ -184,23 +206,36 @@ pio device monitor -b 460800
 4. Click "Upload" button in status bar
 
 ## BLE Connection
-`um980_2`
-### Device Name
-`um980_2`
 
-### Service UUIDs
+### Device Names
+- **ESP32-C3**: `UM980_C3_GPS`
+- **ESP32-S3**: `UM980_S3_GPS`
+
+### Service UUIDs (Standard Nordic UART Service)
 - **Service**: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
-- **RX Characteristic**: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
-- **TX Characteristic**: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+- **RX Characteristic**: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` (WRITE + WRITE_NO_RSP)
+- **TX Characteristic**: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (NOTIFY + READ)
 
-### PIN Code
-`123456`
+**Note**: Both ESP32-C3 and ESP32-S3 use standard Nordic UART Service UUIDs for maximum compatibility with BLE terminal apps. Devices are distinguished by their names.
+
+### Connection
+- **Security**: None (no pairing required)
+- **MTU**: Up to 517 bytes
+- **Connection Interval**: 7.5-15ms (optimized for low latency)
 
 ## WiFi Connection
 **New Feature**: The device also supports WiFi connectivity for direct access to the GNSS module via TCP port 23.
 
 ### WiFi Access Point Settings
+
+**ESP32-C3:**
 - **SSID**: `UM980_GPS_BRIDGE`
+- **Password**: `123456789`
+- **IP Address**: `192.168.4.1`
+- **Port**: `23` (telnet-like access)
+
+**ESP32-S3:**
+- **SSID**: `UM980_GPS_BRIDGE_S3`
 - **Password**: `123456789`
 - **IP Address**: `192.168.4.1`
 - **Port**: `23` (telnet-like access)
@@ -220,7 +255,9 @@ pio device monitor -b 460800
 ## Using Bidirectional Communication
 
 ### Send Commands to GNSS Module
-1. Connect to `um980_2` device via Bluetooth
+1. Connect to BLE device via Bluetooth:
+   - ESP32-C3: `UM980_C3_GPS`
+   - ESP32-S3: `UM980_S3_GPS`
 2. Use any BLE terminal app (Serial Bluetooth Terminal, nRF Connect, etc.)
 3. Send commands directly to GNSS module:
    ```
@@ -234,25 +271,6 @@ pio device monitor -b 460800
 - **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). Great for NTRIP corrections and positioning
 - **nRF Connect (Android/iOS)** — Advanced diagnostics: connect, enable Notify on TX, write to RX
 - Note: Classic SPP apps won't work; this is BLE GATT (NUS)
-1. Connect to `um980_2` device via Bluetooth
-2. Use any BLE terminal app (Serial Bluetooth Terminal, nRF Connect, etc.)
-3. Send commands directly to GNSS module:
-### Bidirectional Communication
-1. **Phone → ESP32 → GNSS**: Commands sent via BLE RX characteristic go directly to UART1 TX
-2. **GNSS → ESP32 → Phone**: NMEA data from UART1 RX goes to BLE TX characteristic
-
-### Data Processing
-1. GNSS ↔ UART1 (460800 baud, bidirectional)
-2. ESP32-C3 parses incoming NMEA messages:
-   SAVECONFIG
-   ```
-4. Receive responses immediately in the same terminal
-
-### Recommended Apps
-4. Raw NMEA data forwarded over BLE NUS (Notify when subscribed; READ fallback)
-- **SW Maps (Android/iOS)** — External GNSS → Generic NMEA (Bluetooth LE). Great for NTRIP corrections and positioning
-- **nRF Connect (Android/iOS)** — Advanced diagnostics: connect, enable Notify on TX, write to RX
-- Note: Classic SPP apps won't work; this is BLE GATT (NUS)
 
 ## NMEA Data Flow
 
@@ -262,7 +280,7 @@ pio device monitor -b 460800
 
 ### Data Processing
 1. GNSS ↔ UART1 (460800 baud, bidirectional)
-2. ESP32-C3 parses incoming NMEA messages:
+2. ESP32 parses incoming NMEA messages:
    - **GSV**: visible satellites per system
    - **GSA**: used satellites (incl. GNGSA system mapping)
    - **GNS**: position, fix quality, satellites used
@@ -303,15 +321,23 @@ pio device monitor -b 460800
 
 ## Version History
 
-- **v2.5.0** (2025-10-10) - Universal ESP32-C3/ESP32-S3 support!
-  - Added ESP32-S3 dual-core architecture support
-  - ESP32-S3 uses TFT_eSPI library for better compatibility
-  - ESP32-C3 maintains Arduino_GFX library compatibility
-  - Optimized pin layout for ESP32-S3 boards (GP1-GP18, GP38-GP45)
-  - ESP32-S3: UART on GP5-GP6, sequential pins from GP7
-  - ESP32-S3: Addressable LED support on GP21
-  - Multi-threaded operation on ESP32-S3 (BLE on core 0, data on core 1)
-  - Conditional compilation for universal codebase
+- **v2.7.0** (2025-10-12) - ESP32-S3-Zero support with configuration fixes!
+  - ✅ **ESP32-S3-Zero support added** with fixed bootloop issue
+  - ✅ Dual-core architecture on ESP32-S3 (BLE on core 0, data on core 1)
+  - ✅ Separate network identifiers: 
+    - WiFi: `UM980_GPS_BRIDGE` (C3) / `UM980_GPS_BRIDGE_S3` (S3)
+    - BLE: `UM980_C3_GPS` (C3) / `UM980_S3_GPS` (S3)
+  - ✅ ESP32-S3 pin mapping optimized for ESP32-S3-Zero hardware
+    - OLED I2C: GPIO1 (SCL), GPIO2 (SDA)
+    - GPS UART1: GPIO5 (RX), GPIO6 (TX)
+    - TFT SPI: GPIO9-13 (temporarily disabled)
+  - ✅ Standard Nordic UART Service UUIDs for maximum app compatibility
+  - ✅ Conditional compilation with `#ifdef ESP32_S3` for universal codebase
+  - ✅ TFT_eSPI library for ESP32-S3, Arduino_GFX for ESP32-C3
+  - ✅ Comprehensive documentation added (ESP32-S3-ZERO_PIN_CONNECTIONS.md)
+  - ✅ Both platforms verified and working:
+    - ESP32-C3: RAM 24.8%, Flash 78.5%
+    - ESP32-S3: RAM 26.9%, Flash 76.7%
 - **v2.0.0** (2025-01-20) - Full bidirectional Bluetooth communication! Send commands to GNSS module via phone
   - Fixed NimBLE-Arduino 2.x callback signatures
   - Resolved "multiple write characteristics" issue
