@@ -23,25 +23,25 @@
 
 // Условная настройка пинов в зависимости от чипа
 #ifdef ESP32_S3
-// ESP32-S3 пины (новая планировка)
-// UART пины
-#define UART_RX_PIN  5   // GP5 для UART RX
-#define UART_TX_PIN  6   // GP6 для UART TX
+// ESP32-S3-Zero пины (оптимизированная планировка)
+// UART пины для GPS модуля (GPIO5-6) - используем UART1
+#define UART_RX_PIN  5   // GPIO5 - UART1 RX для GPS
+#define UART_TX_PIN  6   // GPIO6 - UART1 TX для GPS
 
-// I2C пины для OLED
-#define SDA_PIN_S3   7   // GP7 для SDA
-#define SCL_PIN_S3   8   // GP8 для SCL
+// I2C пины для OLED дисплея (GPIO1-2)
+#define SDA_PIN_S3   2   // GPIO2 для I2C SDA
+#define SCL_PIN_S3   1   // GPIO1 для I2C SCL
 
-// TFT SPI пины (по порядку от 9)
-#define TFT_CS_PIN    -1   // Не используется
-#define TFT_RST_PIN   9   // GP9 для Reset
-#define TFT_DC_PIN    10  // GP10 для Data/Command
-#define TFT_MOSI_PIN  11  // GP11 для SPI Data
-#define TFT_SCLK_PIN  12  // GP12 для SPI Clock
-#define TFT_BL_PIN    13  // GP13 для Backlight
+// TFT SPI пины для ST7789V дисплея (GPIO9-13)
+#define TFT_DC_PIN    9   // GPIO9 для TFT Data/Command
+#define TFT_RST_PIN   10  // GPIO10 для TFT Reset
+#define TFT_MOSI_PIN  11  // GPIO11 для SPI MOSI (данные)
+#define TFT_SCLK_PIN  12  // GPIO12 для SPI Clock
+#define TFT_BL_PIN    13  // GPIO13 для TFT Backlight
+#define TFT_CS_PIN    -1  // Не используется (CS подключен к GND)
 
-// Адресный светодиод
-#define LED_PIN       21  // GP21 для адресного светодиода
+// Адресный светодиод (WS2812 уже установлен на плате)
+#define LED_PIN       21  // GPIO21 - WS2812 RGB LED (встроенный на плате)
 
 #else
 // ESP32-C3 пины (оригинальные)
@@ -345,8 +345,9 @@ inline void clearRingBuffer() {
     bleRingBuffer.clear();
 }
 
-// UUIDs для Nordic UART Service (NUS)
-#define SERVICE_UUID        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+// UUIDs для Nordic UART Service (NUS) - стандартные UUID для совместимости с приложениями
+// Конфликты предотвращаются разными именами устройств (UM980_S3_GPS vs UM980_C3_GPS)
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
@@ -356,8 +357,12 @@ static bool oldDeviceConnected = false;
 static uint16_t bleConnHandle = 0xFFFF;  // Handle соединения для отслеживания
 
 // WiFi variables
-const char* ssid = "UM980_GPS_BRIDGE";  // Default AP name
-const char* password = "123456789";     // Minimum 8 characters for WPA2
+#ifdef ESP32_S3
+const char* ssid = "UM980_GPS_BRIDGE_S3";  // ESP32-S3 AP name
+#else
+const char* ssid = "UM980_GPS_BRIDGE";     // ESP32-C3 AP name
+#endif
+const char* password = "123456789";        // Minimum 8 characters for WPA2
 WiFiServer wifiServer(23);              // Port 23 for telnet-like access
 WiFiClient wifiClients[4];              // Support up to 4 concurrent WiFi clients
 bool wifiClientConnected[4] = {false};
@@ -894,10 +899,13 @@ void clearDisplayLine(int lineNum, bool isOled) {
     if (isOled && lineNum < MAX_OLED_LINES) {
         // Очищаем конкретную область строки в OLED
         display.fillRect(0, oledLines[lineNum].y, SCREEN_WIDTH, OLED_LINE_HEIGHT, SSD1306_BLACK);
-    } else if (!isOled && lineNum < MAX_TFT_LINES) {
+    } 
+#ifndef ESP32_S3  // TFT temporarily disabled for ESP32-S3
+    else if (!isOled && lineNum < MAX_TFT_LINES) {
         // Очищаем конкретную область строки в TFT
         TFT_FILL_RECT(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
     }
+#endif
 }
 
 bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bool isOled) {
@@ -926,12 +934,15 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
             display.setTextSize(lines[lineNum].textSize);
             display.setTextColor(lines[lineNum].color);
             display.print(newText);
-        } else {
+        } 
+#ifndef ESP32_S3  // TFT temporarily disabled for ESP32-S3
+        else {
             TFT_SET_CURSOR(lines[lineNum].x, lines[lineNum].y);
             TFT_SET_TEXT_SIZE(lines[lineNum].textSize);
             TFT_SET_TEXT_COLOR(lines[lineNum].color);
             TFT_PRINT(newText);
         }
+#endif
         
         return true; // Строка была обновлена
     }
@@ -1284,6 +1295,7 @@ void updateDisplay() {
 void setup() {
     // Запускаем основной UART для логирования
     Serial.begin(460800);
+    delay(2000); // Задержка для стабилизации USB CDC на ESP32-S3
     Serial.println("Starting BLE and WiFi to UART bridge...");
 
     // NEW: Disable WiFi/BLE modem power saving
@@ -1314,19 +1326,21 @@ void setup() {
     }
 
     // Инициализация SPI и TFT дисплея с условными пинами
+    // TODO: TFT требует отладки, временно отключен для ESP32-S3
 #ifdef ESP32_S3
-    pinMode(TFT_BL_PIN, OUTPUT); // Подсветка TFT для ESP32-S3 (GP13)
-    digitalWrite(TFT_BL_PIN, HIGH); // Включаем подсветку
+    Serial.println("TFT Display initialization SKIPPED - needs debugging");
 #else
     pinMode(TFT_BL, OUTPUT); // Подсветка TFT для ESP32-C3
     digitalWrite(TFT_BL, HIGH); // Включаем подсветку
-#endif
     
     // Инициализируем TFT с соответствующей библиотекой
     TFT_BEGIN();
     TFT_FILL_SCREEN(TFT_BLACK);
     TFT_SET_TEXT_COLOR(TFT_WHITE);
     TFT_SET_TEXT_SIZE(2);
+    
+    Serial.println("TFT Display initialized with Arduino_GFX!");
+#endif
     
     // Инициализируем состояния дисплеев для корректной работы частичных обновлений
     initializeDisplayStates();
@@ -1337,19 +1351,16 @@ void setup() {
     digitalWrite(LED_PIN, HIGH); // Включаем адресный светодиод
     Serial.println("Addressable LED initialized on GP21");
 #endif
-    
-    // НЕ выводим текст при инициализации - пусть updateDisplay() сам управляет экраном
-#ifdef ESP32_S3
-    Serial.println("TFT Display initialized with TFT_eSPI!");
-#else
-    Serial.println("TFT Display initialized with Arduino_GFX!");
-#endif
 
     // Запускаем UART1 для передачи данных с условными пинами
     SerialPort.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
     // Инициализация BLE
+#ifdef ESP32_S3
+    NimBLEDevice::init("UM980_S3_GPS");
+#else
     NimBLEDevice::init("UM980_C3_GPS");
+#endif
 
 
     // Увеличиваем MTU для максимальной скорости
@@ -1396,7 +1407,11 @@ void setup() {
 
     // Настройка и запуск advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-    pAdvertising->setName("UM980_C3_GPS"); // Имя устройства должно быть установлено первым
+#ifdef ESP32_S3
+    pAdvertising->setName("UM980_S3_GPS");
+#else
+    pAdvertising->setName("UM980_C3_GPS");
+#endif
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->enableScanResponse(true);
     // Оптимальные интервалы для NTRIP потока
@@ -1407,6 +1422,10 @@ void setup() {
 #ifdef ESP32_S3
     // ESP32-S3: Запускаем многопоточность
     Serial.println("ESP32-S3 detected: Starting dual-core tasks...");
+    
+    // КРИТИЧНО: Устанавливаем флаги перед созданием задач
+    bleTaskRunning = true;
+    dataTaskRunning = true;
     
     // BLE задача на ядре 0 (отправка)
     xTaskCreatePinnedToCore(
