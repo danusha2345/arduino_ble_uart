@@ -777,6 +777,54 @@ void parseGNS(const char *nmea) {
     }
 }
 
+// Парсер GGA для точного определения типа фикса (приоритетнее GNS)
+void parseGGA(const char *nmea) {
+    // GGA имеет точное поле quality indicator, которое правильно различает RTK Fixed и Float
+    // $GNGGA,hhmmss.ss,lat,N/S,lon,E/W,quality,numSV,hdop,alt,M,sep,M,age,stnID*cs
+    
+    // Парсим только GNGGA (комбинированное), игнорируем GPGGA/GLGGA и т.д.
+    if (strncmp(nmea, "$GNGGA", 6) != 0) return;
+    
+    strncpy(nmeaParseBuffer, nmea, sizeof(nmeaParseBuffer) - 1);
+    nmeaParseBuffer[sizeof(nmeaParseBuffer) - 1] = '\0';
+    
+    const char *fields[15];
+    int fieldIndex = 0;
+    char *token = strtok(nmeaParseBuffer, ",*");
+    
+    while (token != NULL && fieldIndex < 15) {
+        fields[fieldIndex++] = token;
+        token = strtok(NULL, ",*");
+    }
+    
+    if (fieldIndex < 7) return; // Недостаточно полей
+    
+    // Field 6: Quality indicator из GGA
+    // 0 = Fix not available or invalid
+    // 1 = Single point positioning
+    // 2 = Differential positioning
+    // 3 = GPS PPS mode
+    // 4 = RTK Int (Fixed)
+    // 5 = RTK Float
+    // 7 = Manual input mode
+    // 8 = Simulator mode
+    if (fields[6] && *fields[6]) {
+        int quality = atoi(fields[6]);
+        
+        // GGA quality напрямую соответствует fixQuality
+        if (quality >= 0 && quality <= 8) {
+            gpsData.fixQuality = quality;
+            
+            // Устанавливаем valid для качественных фиксов
+            if (quality == 1 || quality == 2 || quality == 3 || quality == 4 || quality == 5) {
+                gpsData.valid = true;
+            } else {
+                gpsData.valid = false;
+            }
+        }
+    }
+}
+
 // Универсальный диспетчер NMEA
 void parseNMEA(const char *nmea) {
     if (strncmp(nmea, "$GP", 3) == 0 || strncmp(nmea, "$GA", 3) == 0 ||
@@ -786,7 +834,8 @@ void parseNMEA(const char *nmea) {
         if (strstr(nmea, "GSV")) parseGSV(nmea);
         else if (strstr(nmea, "GSA")) parseGSA(nmea);
         else if (strstr(nmea, "GST")) parseGST(nmea);
-        else if (strstr(nmea, "GNS")) parseGNS(nmea);
+        else if (strstr(nmea, "GGA")) parseGGA(nmea);  // GGA первым для fixQuality (приоритет!)
+        else if (strstr(nmea, "GNS")) parseGNS(nmea);  // GNS для координат и satellites
     }
 }
 
@@ -830,9 +879,9 @@ String getFixTypeString(int quality) {
         case 0: return "NO FIX";
         case 1: return "GPS";
         case 2: return "DGPS";
-        case 3: return "PREC";      // High precision (Precise) - сокращено
-        case 4: return "RTK-FIX";   // RTK FIXED - сокращено
-        case 5: return "RTK-FLT";   // RTK FLOAT - сокращено
+        case 3: return "PPS";       // GPS PPS mode - сокращено
+        case 4: return "RTK-FIX";   // RTK Int (Fixed) - сокращено
+        case 5: return "RTK-FLT";   // RTK Float - сокращено
         case 6: return "EST";       // ESTIMATED - сокращено
         case 7: return "MANUAL";
         case 8: return "SIM";
