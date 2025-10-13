@@ -934,6 +934,7 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
             display.setTextSize(lines[lineNum].textSize);
             display.setTextColor(lines[lineNum].color);
             display.print(newText);
+            // display.display() вызывается в updateDisplay() после всех обновлений
         } 
 #ifndef ESP32_S3  // TFT disabled for ESP32-S3 (requires physical display)
         else {
@@ -1280,9 +1281,13 @@ void updateDisplay() {
         }
     }
     
-    // Обновляем дисплей только если были изменения
-    if (oledUpdated && canUpdateOled) {
+    // Обновляем дисплей если были изменения (независимо от частоты)
+    if (oledUpdated) {
         display.display();
+    }
+    
+    // Обновляем счетчик времени только при соблюдении интервала
+    if (canUpdateOled) {
         lastOledUpdate = millis();
     }
     
