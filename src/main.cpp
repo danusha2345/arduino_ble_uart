@@ -1352,12 +1352,14 @@ void setup() {
     delay(2000); // Задержка для стабилизации USB CDC на ESP32-S3
     Serial.println("Starting BLE and WiFi to UART bridge...");
 
-    // NEW: Disable WiFi/BLE modem power saving
-    esp_wifi_set_ps(WIFI_PS_NONE);
-    Serial.println("Modem power saving disabled.");
-
     // Initialize WiFi as Access Point
+    WiFi.mode(WIFI_AP);
     WiFi.softAP(ssid, password);
+    
+    // Disable WiFi modem power saving AFTER WiFi initialization
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    Serial.println("WiFi modem power saving disabled.");
+    
     wifiServer.begin();
     wifiServer.setNoDelay(true); // For better real-time performance
     Serial.println("WiFi AP created:");
