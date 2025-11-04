@@ -1,0 +1,173 @@
+menu "GNSS BLE Bridge Configuration"
+
+    choice TARGET_BOARD
+        prompt "Выберите целевую плату"
+        default TARGET_ESP32_C3
+        help
+            Выберите плату ESP32 для компиляции
+
+        config TARGET_ESP32_C3
+            bool "ESP32-C3 Super Mini"
+        config TARGET_ESP32_C6
+            bool "ESP32-C6 Tenstar SuperMini"
+        config TARGET_ESP32_S3
+            bool "ESP32-S3-Zero"
+    endchoice
+
+    config WIFI_SSID
+        string "WiFi SSID для AP режима"
+        default "UM980_GPS_BRIDGE"
+        help
+            SSID для WiFi точки доступа
+
+    config WIFI_PASSWORD
+        string "WiFi пароль"
+        default "123456789"
+        help
+            Пароль для WiFi точки доступа
+
+    config GPS_UART_BAUD_RATE
+        int "UART скорость для GPS"
+        default 460800
+        help
+            Скорость UART для GPS модуля
+
+    menu "Пины для ESP32-C3"
+        depends on TARGET_ESP32_C3
+
+        config C3_UART_RX_PIN
+            int "UART RX пин"
+            default 8
+
+        config C3_UART_TX_PIN
+            int "UART TX пин"
+            default 10
+
+        config C3_I2C_SDA_PIN
+            int "I2C SDA пин"
+            default 3
+
+        config C3_I2C_SCL_PIN
+            int "I2C SCL пин"
+            default 4
+
+        config C3_SPI_MOSI_PIN
+            int "SPI MOSI пин"
+            default 1
+
+        config C3_SPI_SCLK_PIN
+            int "SPI SCLK пин"
+            default 0
+
+        config C3_TFT_DC_PIN
+            int "TFT DC пин"
+            default 2
+
+        config C3_TFT_RST_PIN
+            int "TFT RST пин"
+            default 9
+
+        config C3_TFT_BL_PIN
+            int "TFT Backlight пин"
+            default 5
+    endmenu
+
+    menu "Пины для ESP32-C6 Tenstar SuperMini"
+        depends on TARGET_ESP32_C6
+
+        config C6_UART_RX_PIN
+            int "UART RX пин"
+            default 6
+            help
+                GPIO6 - UART RX для GPS модуля
+
+        config C6_UART_TX_PIN
+            int "UART TX пин"
+            default 7
+            help
+                GPIO7 - UART TX для GPS модуля
+
+        config C6_SPI_MOSI_PIN
+            int "SPI MOSI пин"
+            default 18
+            help
+                GPIO18 - SPI MOSI для TFT дисплея ST7789V
+
+        config C6_SPI_SCLK_PIN
+            int "SPI SCLK пин"
+            default 19
+            help
+                GPIO19 - SPI Clock для TFT дисплея
+
+        config C6_TFT_DC_PIN
+            int "TFT DC пин"
+            default 20
+            help
+                GPIO20 - Data/Command для TFT дисплея
+
+        config C6_TFT_RST_PIN
+            int "TFT RST пин"
+            default 21
+            help
+                GPIO21 - Reset для TFT дисплея
+
+        config C6_TFT_BL_PIN
+            int "TFT Backlight пин"
+            default 22
+            help
+                GPIO22 - Backlight для TFT дисплея
+
+        config C6_LED_PIN
+            int "Адресный LED пин"
+            default 8
+            help
+                GPIO8 - WS2812 адресный светодиод
+
+        config C6_LED_PIN_2
+            int "Обычный LED пин"
+            default 15
+            help
+                GPIO15 - Обычный светодиод
+    endmenu
+
+    menu "Пины для ESP32-S3"
+        depends on TARGET_ESP32_S3
+
+        config S3_UART_RX_PIN
+            int "UART RX пин"
+            default 5
+
+        config S3_UART_TX_PIN
+            int "UART TX пин"
+            default 6
+
+        config S3_I2C_SDA_PIN
+            int "I2C SDA пин"
+            default 2
+
+        config S3_I2C_SCL_PIN
+            int "I2C SCL пин"
+            default 1
+
+        config S3_SPI_MOSI_PIN
+            int "SPI MOSI пин"
+            default 11
+
+        config S3_SPI_SCLK_PIN
+            int "SPI SCLK пин"
+            default 12
+
+        config S3_TFT_DC_PIN
+            int "TFT DC пин"
+            default 9
+
+        config S3_TFT_RST_PIN
+            int "TFT RST пин"
+            default 10
+
+        config S3_TFT_BL_PIN
+            int "TFT Backlight пин"
+            default 13
+    endmenu
+
+endmenu

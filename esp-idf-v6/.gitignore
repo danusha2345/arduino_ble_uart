@@ -1,0 +1,20 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+*.pyc
+
+# Components (will be added via git submodules or manually)
+components/lvgl/
+components/esp-bsp/
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# OS
+.DS_Store
+Thumbs.db
