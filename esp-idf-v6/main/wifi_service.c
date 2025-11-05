@@ -193,12 +193,14 @@ void wifi_task(void *pvParameters) {
         }
 
         // Отправляем данные из TX буфера всем клиентам
-        size_t avail = ring_buffer_available(g_ble_tx_buffer);
-        if (avail > 0) {
-            size_t to_read = avail > sizeof(tx_buffer) ? sizeof(tx_buffer) : avail;
-            size_t read = ring_buffer_read(g_ble_tx_buffer, tx_buffer, to_read);
-            if (read > 0) {
-                send_to_clients(tx_buffer, read);
+        if (g_ble_tx_buffer) {
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
+            if (avail > 0) {
+                size_t to_read = avail > sizeof(tx_buffer) ? sizeof(tx_buffer) : avail;
+                size_t read = ring_buffer_read(g_ble_tx_buffer, tx_buffer, to_read);
+                if (read > 0) {
+                    send_to_clients(tx_buffer, read);
+                }
             }
         }
 
@@ -207,7 +209,7 @@ void wifi_task(void *pvParameters) {
             if (client_sockets[i] >= 0) {
                 int received = recv(client_sockets[i], rx_buffer, sizeof(rx_buffer), 0);
 
-                if (received > 0) {
+                if (received > 0 && g_ble_rx_buffer) {
                     // Записываем в RX буфер для отправки в GPS
                     ring_buffer_write(g_ble_rx_buffer, rx_buffer, received);
                     ESP_LOGI(TAG, "Client %d sent %d bytes", i, received);

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <HardwareSerial.h>
-#include "esp_wifi.h" // Required for disabling power saving
+#include "esp_wifi.h" 
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiServer.h>
@@ -14,41 +14,195 @@
 #include <Adafruit_SSD1306.h>
 
 // Условное включение библиотеки TFT в зависимости от чипа
-#ifdef ESP32_S3
-#include <TFT_eSPI.h>
+#if defined(ESP32_S3)
+    #include <TFT_eSPI.h>
+#elif defined(ESP32_C6_TENSTAR)
+    #include <lvgl.h>
+    #include "esp_lcd_panel_io.h"
+    #include "esp_lcd_panel_vendor.h"
+    #include "esp_lcd_panel_ops.h"
+    #include "driver/gpio.h"
+    #include "driver/spi_master.h"
+    #include "esp_err.h"
 #else
 // Для ESP32-C3 используем Arduino_GFX (работает и компилируется)
-#include <Arduino_GFX_Library.h>
+    #include <Arduino_GFX_Library.h>
 #endif
 
 // Условная настройка пинов в зависимости от чипа
 #ifdef ESP32_S3
-// ESP32-S3-Zero пины (оптимизированная планировка)
-// UART пины для GPS модуля (GPIO5-6) - используем UART1
-#define UART_RX_PIN  5   // GPIO5 - UART1 RX для GPS
-#define UART_TX_PIN  6   // GPIO6 - UART1 TX для GPS
+    // ESP32-S3-Zero пины (оптимизированная планировка)
+    // UART пины для GPS модуля (GPIO5-6) - используем UART1
+    #define UART_RX_PIN  5   // GPIO5 - UART1 RX для GPS
+    #define UART_TX_PIN  6   // GPIO6 - UART1 TX для GPS
 
-// I2C пины для OLED дисплея (GPIO1-2)
-#define SDA_PIN_S3   2   // GPIO2 для I2C SDA
-#define SCL_PIN_S3   1   // GPIO1 для I2C SCL
+    // I2C пины для OLED дисплея (GPIO1-2)
+    #define SDA_PIN_S3   2   // GPIO2 для I2C SDA
+    #define SCL_PIN_S3   1   // GPIO1 для I2C SCL
 
-// TFT SPI пины для ST7789V дисплея (GPIO9-13)
-#define TFT_DC_PIN    9   // GPIO9 для TFT Data/Command
-#define TFT_RST_PIN   10  // GPIO10 для TFT Reset
-#define TFT_MOSI_PIN  11  // GPIO11 для SPI MOSI (данные)
-#define TFT_SCLK_PIN  12  // GPIO12 для SPI Clock
-#define TFT_BL_PIN    13  // GPIO13 для TFT Backlight
-#define TFT_CS_PIN    -1  // Не используется (CS подключен к GND)
+    // TFT SPI пины для ST7789V дисплея (GPIO9-13)
+    #define TFT_DC_PIN    9   // GPIO9 для TFT Data/Command
+    #define TFT_RST_PIN   10  // GPIO10 для TFT Reset
+    #define TFT_MOSI_PIN  11  // GPIO11 для SPI MOSI (данные)
+    #define TFT_SCLK_PIN  12  // GPIO12 для SPI Clock
+    #define TFT_BL_PIN    13  // GPIO13 для TFT Backlight
+    #define TFT_CS_PIN    -1  // Не используется (CS подключен к GND)
 
-// Адресный светодиод (WS2812 уже установлен на плате)
-#define LED_PIN       21  // GPIO21 - WS2812 RGB LED (встроенный на плате)
+    // Адресный светодиод (WS2812 уже установлен на плате)
+    #define LED_PIN       21  // GPIO21 - WS2812 RGB LED (встроенный на плате)
+
+#elif defined(ESP32_C6_TENSTAR)
+    // ESP32-C6-Tenstar-Supermini настройка под LVGL
+    // UART пины для GPS модуля
+    #define UART_RX_PIN     6   // GPIO0 - UART RX для GPS
+    #define UART_TX_PIN     7   // GPIO1 - UART TX для GPS
+
+    // TFT SPI пины для ST7789V дисплея (переназначенные пины: 20,19,18,15,14,9)
+    #define LCD_SPI_HOST  SPI3_HOST
+    #define TFT_MOSI_PIN  18  // GPIO20 для SPI MOSI (данные)
+    #define TFT_SCLK_PIN  19  // GPIO19 для SPI Clock
+    #define TFT_DC_PIN    20  // GPIO18 для TFT Data/Command
+    #define TFT_RST_PIN   21  // GPIO15 для TFT Reset
+    #define TFT_BL_PIN    22  // GPIO14 для TFT Backlight
+
+    // Адресный светодиод
+    #define LED_PIN       8   // GPIO8 - LED pin для ESP32-C6
+    // просто светодиод 
+    #define LED_PIN_2     15   // GPIO15 - LED pin для ESP32-C6
+    // Параметры вашего дисплея
+    #define LCD_WIDTH       240
+    #define LCD_HEIGHT      280
+    // Глобальные переменные
+    static esp_lcd_panel_handle_t panel_handle = NULL;
+    static esp_lcd_panel_io_handle_t io_handle = NULL;
+    static lv_disp_draw_buf_t draw_buf;
+    static lv_color_t buf[LCD_WIDTH * 15]; // Буфер для 15 строк
+    // Функция инициализации дисплея с SPI mode 3
+    bool init_display() {
+        Serial.println("Initializing ST7789V3 display with SPI Mode 3...");
+        
+        // 1. Инициализация SPI шины с mode 3
+        spi_bus_config_t buscfg = {
+            .sclk_io_num = LCD_SCLK_GPIO,
+            .mosi_io_num = LCD_MOSI_GPIO,
+            .miso_io_num = -1, // Не используется
+            .quadwp_io_num = -1,
+            .quadhd_io_num = -1,
+            .max_transfer_sz = LCD_WIDTH * LCD_HEIGHT * 2,
+            .flags = SPICOMMON_BUSFLAG_MASTER,
+        };
+
+        esp_err_t ret = spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+        if (ret != ESP_OK) {
+            Serial.printf("SPI bus initialization failed: %d\n", ret);
+            return false;
+        }
+
+        // 2. Настройка пинов управления с SPI mode 3
+        esp_lcd_panel_io_spi_config_t io_config = {
+            .dc_gpio_num = LCD_DC_GPIO,
+            .cs_gpio_num = LCD_CS_GPIO,
+            .pclk_hz = 40 * 1000 * 1000, // 40MHz
+            .lcd_cmd_bits = 8,
+            .lcd_param_bits = 8,
+            .spi_mode = 3, // SPI Mode 3 (CPOL=1, CPHA=1)
+            .trans_queue_depth = 10,
+            .on_color_trans_done = NULL,
+            .user_ctx = NULL,
+            .flags = {
+                .dc_low_on_data = false,
+                .octal_mode = false,
+            },
+        };
+
+        ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_SPI_HOST, &io_config, &io_handle);
+        if (ret != ESP_OK) {
+            Serial.printf("Panel IO initialization failed: %d\n", ret);
+            return false;
+        }
+
+        // 3. Создание панели ST7789
+        esp_lcd_panel_dev_config_t panel_config = {
+            .reset_gpio_num = LCD_RST_GPIO,
+            .color_space = ESP_LCD_COLOR_SPACE_BGR,
+            .bits_per_pixel = 16,
+            .vendor_config = NULL,
+        };
+
+        ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+        if (ret != ESP_OK) {
+            Serial.printf("Panel creation failed: %d\n", ret);
+            return false;
+        }
+
+        // 4. Инициализация панели
+        Serial.println("Resetting panel...");
+        ret = esp_lcd_panel_reset(panel_handle);
+        if (ret != ESP_OK) {
+            Serial.printf("Panel reset failed: %d\n", ret);
+            return false;
+        }
+
+        Serial.println("Initializing panel...");
+        ret = esp_lcd_panel_init(panel_handle);
+        if (ret != ESP_OK) {
+            Serial.printf("Panel initialization failed: %d\n", ret);
+            return false;
+        }
+
+        // 5. Настройка ориентации для разрешения 240x280
+        Serial.println("Configuring panel orientation...");
+        ret = esp_lcd_panel_mirror(panel_handle, true, false); // Зеркалирование по X
+        if (ret != ESP_OK) {
+            Serial.printf("Mirror configuration failed: %d\n", ret);
+            return false;
+        }
+
+        ret = esp_lcd_panel_swap_xy(panel_handle, false);
+        if (ret != ESP_OK) {
+            Serial.printf("Swap XY failed: %d\n", ret);
+            return false;
+        }
+
+        // 7. Включение подсветки
+        Serial.println("Setting up backlight...");
+        gpio_config_t bl_config = {
+            .pin_bit_mask = (1ULL << LCD_BL_GPIO),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE
+        };
+        gpio_config(&bl_config);
+        gpio_set_level((gpio_num_t)LCD_BL_GPIO, 1); // HIGH для включения
+
+        Serial.println("Display initialized successfully!");
+        return true;
+    }
+    // Функция отрисовки для LVGL
+    void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map) {
+        int offsetx1 = area->x1;
+        int offsety1 = area->y1;
+        int offsetx2 = area->x2;
+        int offsety2 = area->y2;
+        
+        // Отправка данных на дисплей
+        esp_lcd_panel_draw_bitmap(panel_handle, 
+                                offsetx1, offsety1, 
+                                offsetx2 + 1, offsety2 + 1, 
+                                color_map);
+        
+        lv_disp_flush_ready(drv);
+    }
+
+
 
 #else
 // ESP32-C3 пины (оригинальные)
-#define UART_RX_PIN  8   // GPIO8 для UART RX
-#define UART_TX_PIN  10  // GPIO10 для UART TX
-#define SDA_PIN_C3   3   // GPIO3 для SDA
-#define SCL_PIN_C3   4   // GPIO4 для SCL
+    #define UART_RX_PIN  8   // GPIO8 для UART RX
+    #define UART_TX_PIN  10  // GPIO10 для UART TX
+    #define SDA_PIN_C3   3   // GPIO3 для SDA
+    #define SCL_PIN_C3   4   // GPIO4 для SCL
 #endif
 
 // Используем второй аппаратный UART (Serial1, т.к. Serial0 занят USB)
@@ -62,8 +216,8 @@ HardwareSerial SerialPort(1);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Условная инициализация TFT дисплея в зависимости от чипа
-#ifdef ESP32_S3
-// TFT ST7789V Display - TFT_eSPI библиотека с правильными пинами ESP32-S3
+#if defined(ESP32_S3) || defined(ESP32_C6_TENSTAR)
+// TFT ST7789V Display - TFT_eSPI библиотека с правильными пинами ESP32-S3/C6-Tenstar
 TFT_eSPI tft = TFT_eSPI();
 
 // Цветовые константы для TFT_eSPI
@@ -128,6 +282,9 @@ TinyGPSPlus gps;
 #ifdef ESP32_S3
 #define SDA_PIN SDA_PIN_S3
 #define SCL_PIN SCL_PIN_S3
+#elif defined(ESP32_C6_TENSTAR)
+#define SDA_PIN SDA_PIN_C6
+#define SCL_PIN SCL_PIN_C6
 #else
 #define SDA_PIN SDA_PIN_C3
 #define SCL_PIN SCL_PIN_C3
@@ -293,9 +450,9 @@ static RingBuffer bleRxBuffer;  // Отдельный буфер для RX
 static uint8_t rxTempBuffer[512];
 
 // ==============================================
-// ESP32-S3 DUAL-CORE OPTIMIZATION
+// ESP32-S3/C6 DUAL-CORE OPTIMIZATION
 // ==============================================
-#ifdef ESP32_S3
+#if defined(ESP32_S3) || defined(ESP32_C6_TENSTAR)
 // Хэндлы задач для многопоточности
 TaskHandle_t bleTaskHandle = NULL;
 TaskHandle_t dataTaskHandle = NULL;
@@ -307,7 +464,7 @@ volatile bool dataTaskRunning = false;
 // Forward declarations for tasks (functions defined after global variables)
 void bleTask(void* parameter);
 void dataTask(void* parameter);
-#endif  // ESP32_S3
+#endif  // ESP32_S3 || ESP32_C6_TENSTAR
 
 // Функция для поиска последней границы NMEA сообщения в буфере
 size_t findLastNmeaBoundary(const uint8_t* buffer, size_t length) {
@@ -359,6 +516,8 @@ static uint16_t bleConnHandle = 0xFFFF;  // Handle соединения для �
 // WiFi variables
 #ifdef ESP32_S3
 const char* ssid = "UM980_GPS_BRIDGE_S3";  // ESP32-S3 AP name
+#elif defined(ESP32_C6_TENSTAR)
+const char* ssid = "UM980_GPS_BRIDGE_C6";  // ESP32-C6-Tenstar AP name
 #else
 const char* ssid = "UM980_GPS_BRIDGE";     // ESP32-C3 AP name
 #endif
@@ -465,6 +624,10 @@ void handleWiFiClients() {
                 wifiClients[i] = wifiServer.available();
                 wifiClientConnected[i] = true;
                 Serial.printf("New WiFi client connected on slot %d\n", i);
+                
+                // Увеличиваем мощность WiFi при подключении клиента
+                setWiFiPower(78);  // Максимальная мощность (примерно 19.5dBm)
+                
                 break;
             }
         }
@@ -497,8 +660,7 @@ void handleWiFiClients() {
             wifiClientConnected[i] = false;
             Serial.printf("WiFi client disconnected from slot %d\n", i);
             
-            // Check if all connections are gone, then clear the buffer
-            bool hasAnyConnection = deviceConnected; // BLE connected
+            // Проверяем, остались ли ещё подключенные WiFi клиенты
             bool hasWiFiConnection = false;
             for (int j = 0; j < 4; j++) {
                 if (wifiClientConnected[j]) {
@@ -506,6 +668,14 @@ void handleWiFiClients() {
                     break;
                 }
             }
+            
+            // Если нет подключенных WiFi клиентов, устанавливаем низкую мощность
+            if (!hasWiFiConnection) {
+                setWiFiPower(20);  // 5dBm мощность
+            }
+            
+            // Check if all connections are gone, then clear the buffer
+            bool hasAnyConnection = deviceConnected; // BLE connected
             if (!hasAnyConnection && !hasWiFiConnection) {
                 clearRingBuffer();
                 Serial.println("Ring buffer cleared (all connections disconnected)");
@@ -523,6 +693,21 @@ void sendWiFiData(const uint8_t* data, size_t length) {
                 Serial.printf("WiFi client %d: only sent %d of %d bytes\n", i, sent, length);
             }
         }
+    }
+}
+
+// Функция для управления мощностью WiFi
+// power - мощность в единицах 0.25dBm (например, 20 для 5dBm, 78 для максимума ~19.5dBm)
+void setWiFiPower(int power) {
+    // Ограничиваем значение в допустимом диапазоне
+    if (power < 0) power = 0;
+    if (power > 78) power = 78;
+    
+    esp_err_t result = esp_wifi_set_max_tx_power(power);
+    if (result == ESP_OK) {
+        Serial.printf("WiFi TX power set to %d (=%ddBm)\n", power, power/4);
+    } else {
+        Serial.printf("Failed to set WiFi TX power: %d\n", result);
     }
 }
 
@@ -949,7 +1134,7 @@ void clearDisplayLine(int lineNum, bool isOled) {
         // Очищаем конкретную область строки в OLED
         display.fillRect(0, oledLines[lineNum].y, SCREEN_WIDTH, OLED_LINE_HEIGHT, SSD1306_BLACK);
     } 
-#ifndef ESP32_S3  // TFT disabled for ESP32-S3 (requires physical display)
+#if !defined(ESP32_S3) || defined(ESP32_C6_TENSTAR)  // TFT enabled for ESP32-C6-Tenstar
     else if (!isOled && lineNum < MAX_TFT_LINES) {
         // Очищаем конкретную область строки в TFT
         TFT_FILL_RECT(0, tftLines[lineNum].y, 240, TFT_LINE_HEIGHT, TFT_BLACK);
@@ -985,7 +1170,7 @@ bool updateDisplayLine(int lineNum, const String& newText, uint16_t newColor, bo
             display.print(newText);
             // display.display() вызывается в updateDisplay() после всех обновлений
         } 
-#ifndef ESP32_S3  // TFT disabled for ESP32-S3 (requires physical display)
+#if !defined(ESP32_S3) || defined(ESP32_C6_TENSTAR)  // TFT enabled for ESP32-C6-Tenstar
         else {
             TFT_SET_CURSOR(lines[lineNum].x, lines[lineNum].y);
             TFT_SET_TEXT_SIZE(lines[lineNum].textSize);
@@ -1349,7 +1534,7 @@ void updateDisplay() {
 void setup() {
     // Запускаем основной UART для логирования
     Serial.begin(460800);
-    delay(2000); // Задержка для стабилизации USB CDC на ESP32-S3
+    delay(1000); // Задержка для стабилизации USB CDC на ESP32-S3
     Serial.println("Starting BLE and WiFi to UART bridge...");
 
     // NEW: Disable WiFi/BLE modem power saving
@@ -1395,6 +1580,31 @@ void setup() {
     // tft.setTextColor(TFT_WHITE);
     // tft.setTextSize(2);
     // Serial.println("TFT Display initialized with TFT_eSPI!");
+#elif defined(ESP32_C6_TENSTAR)
+    // Инициализация дисплея
+    if (!init_display()) {
+        Serial.println("Failed to initialize display!");
+        while (1) {
+            delay(1000);
+        }
+    }
+
+    // Инициализация LVGL
+    Serial.println("Initializing LVGL...");
+    lv_init();
+    
+    // Инициализация буфера отрисовки
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, sizeof(buf) / sizeof(lv_color_t));
+    
+    // Настройка драйвера дисплея
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = LCD_WIDTH;
+    disp_drv.ver_res = LCD_HEIGHT;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+    lv_disp_drv_register(&disp_drv);
+
 #else
     pinMode(TFT_BL, OUTPUT); // Подсветка TFT для ESP32-C3
     digitalWrite(TFT_BL, HIGH); // Включаем подсветку
@@ -1424,6 +1634,8 @@ void setup() {
     // Инициализация BLE
 #ifdef ESP32_S3
     NimBLEDevice::init("UM980_S3_GPS");
+#elif defined(ESP32_C6_TENSTAR)
+    NimBLEDevice::init("UM980_C6_GPS");
 #else
     NimBLEDevice::init("UM980_C3_GPS");
 #endif
@@ -1475,6 +1687,8 @@ void setup() {
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
 #ifdef ESP32_S3
     pAdvertising->setName("UM980_S3_GPS");
+#elif defined(ESP32_C6_TENSTAR)
+    pAdvertising->setName("UM980_C6_GPS");
 #else
     pAdvertising->setName("UM980_C3_GPS");
 #endif

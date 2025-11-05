@@ -213,13 +213,14 @@ static void uart_task(void *pvParameters) {
         // Читаем данные из GPS
         int len = uart_read_bytes(UART_NUM_1, uart_data, UART_BUF_SIZE,
                                    pdMS_TO_TICKS(20));
-        if (len > 0) {
+        if (len > 0 && g_ble_tx_buffer) {
             // Записываем в TX буфер для отправки по BLE/WiFi
             ring_buffer_write(g_ble_tx_buffer, uart_data, len);
         }
 
         // Проверяем буфер RX на наличие команд от BLE/WiFi
-        size_t rx_avail = ring_buffer_available(g_ble_rx_buffer);
+        if (g_ble_rx_buffer) {
+            size_t rx_avail = ring_buffer_available(g_ble_rx_buffer);
         if (rx_avail > 0) {
             size_t to_read = rx_avail > RX_BUFFER_SIZE ? RX_BUFFER_SIZE : rx_avail;
             size_t read = ring_buffer_read(g_ble_rx_buffer, rx_data, to_read);
@@ -228,6 +229,7 @@ static void uart_task(void *pvParameters) {
                 // Отправляем команды в GPS модуль
                 uart_write_bytes(UART_NUM_1, (const char*)rx_data, read);
             }
+        }
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));

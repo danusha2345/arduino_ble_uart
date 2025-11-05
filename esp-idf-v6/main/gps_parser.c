@@ -402,7 +402,8 @@ void gps_parser_task(void *pvParameters) {
 
     while (1) {
         // Читаем байты из TX буфера (который содержит данные от GPS модуля)
-        size_t avail = ring_buffer_available(g_ble_tx_buffer);
+        if (g_ble_tx_buffer) {
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
 
         if (avail > 0) {
             // Читаем по одному байту для построчного парсинга
@@ -431,6 +432,7 @@ void gps_parser_task(void *pvParameters) {
                     }
                 }
             }
+        }
         }
 
         // Проверяем таймауты раз в секунду
