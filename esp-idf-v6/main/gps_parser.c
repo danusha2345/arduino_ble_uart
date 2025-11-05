@@ -370,6 +370,7 @@ static void parse_gsv(const char *nmea) {
 /**
  * @brief Парсер GSA для используемых спутников
  * Формат: $GPGSA,mode,fixType,sv1,...,sv12,PDOP,HDOP,VDOP*cs
+ * Формат GNGSA: $GNGSA,mode,fixType,sv1,...,sv12,PDOP,HDOP,VDOP,systemID*cs
  */
 static void parse_gsa(const char *nmea) {
     strncpy(nmea_parse_buffer, nmea, sizeof(nmea_parse_buffer) - 1);
@@ -401,6 +402,38 @@ static void parse_gsa(const char *nmea) {
     } else if (strncmp(nmea, "$GBGSA", 6) == 0) {
         g_sat_data.beidou.used = used;
         g_sat_data.beidou.lastUpdate = now;
+    } else if (strncmp(nmea, "$GNGSA", 6) == 0) {
+        // GNGSA - комбинированное сообщение с System ID в поле 18
+        // System ID: 1=GPS, 2=GLONASS, 3=Galileo, 4=BeiDou, 5=QZSS, 6=NavIC
+        if (n > 18 && fields[18] && *fields[18]) {
+            int system_id = atoi(fields[18]);
+
+            switch (system_id) {
+                case 1:  // GPS
+                    g_sat_data.gps.used = used;
+                    g_sat_data.gps.lastUpdate = now;
+                    break;
+                case 2:  // GLONASS
+                    g_sat_data.glonass.used = used;
+                    g_sat_data.glonass.lastUpdate = now;
+                    break;
+                case 3:  // Galileo
+                    g_sat_data.galileo.used = used;
+                    g_sat_data.galileo.lastUpdate = now;
+                    break;
+                case 4:  // BeiDou
+                    g_sat_data.beidou.used = used;
+                    g_sat_data.beidou.lastUpdate = now;
+                    break;
+                case 5:  // QZSS
+                    g_sat_data.qzss.used = used;
+                    g_sat_data.qzss.lastUpdate = now;
+                    break;
+                default:
+                    ESP_LOGW(TAG, "Unknown GNGSA System ID: %d", system_id);
+                    break;
+            }
+        }
     }
 }
 
