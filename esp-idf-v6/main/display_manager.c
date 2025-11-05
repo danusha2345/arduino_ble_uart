@@ -329,16 +329,20 @@ void display_update_gps_data(void) {
         snprintf(buf, sizeof(buf), "Lon: %.8f", g_gps_data.longitude);
         lv_label_set_text(label_line[line++], buf);
 
-        // Строка 5: Высота + время (если доступно)
+        // Строка 5: Высота
+        snprintf(buf, sizeof(buf), "Alt: %.2f m", g_gps_data.altitude);
+        lv_label_set_text(label_line[line++], buf);
+
+        // Строка 6: Время (если доступно)
         if (g_gps_data.time_valid) {
             char time_str[16];
             format_local_time(g_gps_data.hour, g_gps_data.minute, g_gps_data.second,
                             g_gps_data.timezone_offset_minutes, time_str, sizeof(time_str));
-            snprintf(buf, sizeof(buf), "Alt: %.1fm %s", g_gps_data.altitude, time_str);
+            snprintf(buf, sizeof(buf), "Time: %s", time_str);
+            lv_label_set_text(label_line[line++], buf);
         } else {
-            snprintf(buf, sizeof(buf), "Alt: %.2f m", g_gps_data.altitude);
+            lv_label_set_text(label_line[line++], "Time: --:--:--");
         }
-        lv_label_set_text(label_line[line++], buf);
 
         // Строка 6: Пустая строка (разделитель)
         lv_label_set_text(label_line[line++], "");
