@@ -27,6 +27,52 @@ static const char *TAG = "WiFi";
 static int server_socket = -1;
 static int client_sockets[MAX_WIFI_CLIENTS] = {-1, -1, -1, -1};
 
+// Счётчик активных клиентов для управления мощностью
+static int active_clients = 0;
+
+/**
+ * @brief Установка мощности передатчика WiFi
+ * @param power_dbm Мощность в dBm (5-20)
+ */
+static void set_wifi_power(int8_t power_dbm) {
+    // Конвертируем dBm в 0.25dBm единицы (API ESP-IDF использует 0.25dBm шаги)
+    int8_t power_quarter_dbm = power_dbm * 4;
+
+    esp_err_t ret = esp_wifi_set_max_tx_power(power_quarter_dbm);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi TX power set to %d dBm", power_dbm);
+    } else {
+        ESP_LOGW(TAG, "Failed to set WiFi TX power: %s", esp_err_to_name(ret));
+    }
+}
+
+/**
+ * @brief Подсчёт активных клиентов и установка мощности
+ */
+static void update_wifi_power(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_WIFI_CLIENTS; i++) {
+        if (client_sockets[i] >= 0) {
+            count++;
+        }
+    }
+
+    // Изменяем мощность только если количество клиентов изменилось
+    if (count != active_clients) {
+        active_clients = count;
+
+        if (active_clients > 0) {
+            // Есть подключенные клиенты - максимальная мощность
+            set_wifi_power(20);
+            ESP_LOGI(TAG, "Clients connected (%d), increased power to 20 dBm", active_clients);
+        } else {
+            // Нет клиентов - минимальная мощность для экономии энергии
+            set_wifi_power(5);
+            ESP_LOGI(TAG, "No clients, reduced power to 5 dBm");
+        }
+    }
+}
+
 /**
  * @brief WiFi event handler
  */
@@ -84,6 +130,9 @@ esp_err_t wifi_service_init(void) {
     // Отключаем power saving
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+    // Устанавливаем начальную мощность 5 dBm (нет клиентов)
+    set_wifi_power(5);
+
     ESP_LOGI(TAG, "WiFi AP started: SSID=%s", WIFI_AP_SSID);
 
     return ESP_OK;
@@ -127,6 +176,8 @@ static int start_tcp_server(void) {
  * @brief Отправка данных всем клиентам
  */
 static void send_to_clients(const uint8_t *data, size_t len) {
+    bool client_disconnected = false;
+
     for (int i = 0; i < MAX_WIFI_CLIENTS; i++) {
         if (client_sockets[i] >= 0) {
             int sent = send(client_sockets[i], data, len, 0);
@@ -134,8 +185,14 @@ static void send_to_clients(const uint8_t *data, size_t len) {
                 ESP_LOGW(TAG, "Client %d send failed: %d", i, errno);
                 close(client_sockets[i]);
                 client_sockets[i] = -1;
+                client_disconnected = true;
             }
         }
+    }
+
+    // Обновляем мощность если клиент отключился
+    if (client_disconnected) {
+        update_wifi_power();
     }
 }
 
@@ -186,6 +243,9 @@ void wifi_task(void *pvParameters) {
 
                 ESP_LOGI(TAG, "Client %d connected from %s", slot,
                          inet_ntoa(client_addr.sin_addr));
+
+                // Обновляем мощность WiFi (увеличиваем до 20 dBm)
+                update_wifi_power();
             } else {
                 ESP_LOGW(TAG, "No free slots for new client");
                 close(new_client);
@@ -218,6 +278,9 @@ void wifi_task(void *pvParameters) {
                     ESP_LOGI(TAG, "Client %d disconnected", i);
                     close(client_sockets[i]);
                     client_sockets[i] = -1;
+
+                    // Обновляем мощность WiFi (уменьшаем до 5 dBm если нет клиентов)
+                    update_wifi_power();
                 }
             }
         }

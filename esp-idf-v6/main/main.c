@@ -280,8 +280,16 @@ void app_main(void) {
 #endif
 
     // Инициализация и запуск BLE сервиса
+    // ВАЖНО: nimble_port_init() внутри ble_service_init() автоматически:
+    // - Инициализирует BT контроллер (esp_bt_controller_init/enable)
+    // - Вызывает esp_nimble_hci_init() через esp_nimble_init()
+    // - Освобождает память Classic BT
     ESP_LOGI(TAG, "Starting BLE service...");
-    ESP_ERROR_CHECK(ble_service_init());
+    ret = ble_service_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE service initialization failed: %s", esp_err_to_name(ret));
+        return;
+    }
     xTaskCreatePinnedToCore(ble_task, "ble_task", 4096, NULL, 5,
                            &ble_task_handle, 0);
 

@@ -129,6 +129,14 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
 
+            // Запрашиваем обмен MTU сразу после подключения
+            int rc = ble_gattc_exchange_mtu(conn_handle, NULL, NULL);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Failed to exchange MTU: %d", rc);
+            } else {
+                ESP_LOGI(TAG, "MTU exchange initiated");
+            }
+
             // Запрашиваем обновление параметров соединения для максимальной скорости
             // Интервалы 7.5-15 мс для максимальной пропускной способности
             struct ble_gap_upd_params params = {
@@ -139,16 +147,26 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
                 .min_ce_len = 0x0010,       // Мин. длительность события подключения
                 .max_ce_len = 0x0300        // Макс. длительность события подключения
             };
-            int rc = ble_gap_update_params(conn_handle, &params);
+            rc = ble_gap_update_params(conn_handle, &params);
             if (rc != 0) {
                 ESP_LOGW(TAG, "Failed to update connection params: %d", rc);
             }
 
             // Инициируем процесс безопасности для bonding
             rc = ble_gap_security_initiate(conn_handle);
-            if (rc != 0) {
-                ESP_LOGI(TAG, "Security initiate result: %d (0=success, %d=already paired)",
-                         rc, BLE_HS_EALREADY);
+            if (rc == BLE_HS_EALREADY) {
+                // Устройство уже спарено, проверяем статус шифрования
+                ESP_LOGI(TAG, "Device already paired, checking encryption status");
+                struct ble_gap_conn_desc desc;
+                if (ble_gap_conn_find(conn_handle, &desc) == 0 && desc.sec_state.encrypted) {
+                    ESP_LOGI(TAG, "Connection already encrypted with bonded device");
+                } else {
+                    // Повторяем инициацию безопасности
+                    ESP_LOGW(TAG, "Not encrypted, retrying security initiation");
+                    ble_gap_security_initiate(conn_handle);
+                }
+            } else if (rc != 0) {
+                ESP_LOGW(TAG, "Security initiate failed: %d", rc);
             } else {
                 ESP_LOGI(TAG, "Security/bonding initiated");
             }
@@ -192,6 +210,22 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
             int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
             ESP_LOGI(TAG, "Passkey inject result: %d", rc);
         }
+        break;
+
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+        // Устройство пытается повторно соединиться - удаляем старую запись bonding
+        ESP_LOGI(TAG, "Repeat pairing detected, deleting old bond");
+        {
+            int rc = ble_gap_conn_find(event->repeat_pairing.conn_handle, NULL);
+            if (rc == 0) {
+                ble_store_util_delete_peer(&event->repeat_pairing.peer_addr);
+            }
+        }
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        ESP_LOGI(TAG, "Advertising completed, restarting...");
+        ble_advertise();
         break;
 
     default:
@@ -281,6 +315,7 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.sm_bonding = 1;                          // Включить bonding (сохраняем ключи)
     ble_hs_cfg.sm_mitm = 0;                             // Отключить MITM (нет UI для подтверждения)
     ble_hs_cfg.sm_sc = 0;                               // Отключить SC - используем Legacy pairing для совместимости
+    ble_hs_cfg.sm_min_key_size = 7;                     // Минимальная длина ключа для Legacy pairing (7-16 байт)
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
 
@@ -325,8 +360,15 @@ void ble_task(void *pvParameters) {
     uint8_t buffer[512];
 
     while (1) {
-        // Проверяем инициализацию буфера, подключение и уведомления
-        if (g_ble_tx_buffer && conn_handle != BLE_HS_CONN_HANDLE_NONE && notify_enabled) {
+        // Явная проверка инициализации буферов
+        if (!g_ble_tx_buffer || !g_ble_rx_buffer) {
+            ESP_LOGE(TAG, "BLE buffers not initialized!");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        // Проверяем подключение и уведомления
+        if (conn_handle != BLE_HS_CONN_HANDLE_NONE && notify_enabled) {
             size_t avail = ring_buffer_available(g_ble_tx_buffer);
 
             if (avail > 0) {

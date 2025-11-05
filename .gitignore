@@ -110,7 +110,6 @@ wheels/
 *.pfx
 
 # Configuration files with secrets
-config.h
 secrets.h
 credentials.h
 *.config

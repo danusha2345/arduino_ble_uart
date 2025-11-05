@@ -118,6 +118,53 @@ static const char* get_fix_type_string(int quality) {
     }
 }
 
+/**
+ * @brief Парсинг времени из формата hhmmss.ss
+ * @param time_str Строка времени в формате hhmmss.ss
+ * @param hour Указатель для записи часов
+ * @param minute Указатель для записи минут
+ * @param second Указатель для записи секунд
+ * @return true если парсинг успешен
+ */
+static bool parse_time(const char *time_str, int *hour, int *minute, int *second) {
+    if (!time_str || strlen(time_str) < 6) {
+        return false;
+    }
+
+    // Парсим hhmmss из первых 6 символов
+    char hh[3] = {time_str[0], time_str[1], '\0'};
+    char mm[3] = {time_str[2], time_str[3], '\0'};
+    char ss[3] = {time_str[4], time_str[5], '\0'};
+
+    *hour = atoi(hh);
+    *minute = atoi(mm);
+    *second = atoi(ss);
+
+    // Проверка валидности
+    if (*hour < 0 || *hour > 23 || *minute < 0 || *minute > 59 || *second < 0 || *second > 59) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief Вычисление смещения часового пояса от долготы
+ * @param longitude Долгота в десятичных градусах
+ * @return Смещение в минутах
+ */
+static int estimate_timezone_offset_from_longitude(double longitude) {
+    // Каждые 15 градусов долготы = 1 час = 60 минут
+    // Положительная долгота (восток) дает положительное смещение
+    int offset_hours = (int)round(longitude / 15.0);
+
+    // Ограничиваем от -12 до +14 часов
+    if (offset_hours < -12) offset_hours = -12;
+    if (offset_hours > 14) offset_hours = 14;
+
+    return offset_hours * 60;  // Возвращаем в минутах
+}
+
 // ==================================================
 // ПАРСЕРЫ NMEA СООБЩЕНИЙ
 // ==================================================
@@ -173,6 +220,17 @@ static void parse_gns(const char *nmea) {
     int n = split_fields(nmea_parse_buffer, fields, 32);
     if (n < 11) return;
 
+    // Field 1: Time UTC (hhmmss.ss)
+    if (fields[1] && *fields[1]) {
+        int hour, minute, second;
+        if (parse_time(fields[1], &hour, &minute, &second)) {
+            g_gps_data.hour = hour;
+            g_gps_data.minute = minute;
+            g_gps_data.second = second;
+            g_gps_data.time_valid = true;
+        }
+    }
+
     // Field 3: Latitude (DDMM.MMM)
     if (fields[2] && fields[3] && *fields[2] && *fields[3]) {
         double lat = convert_to_decimal_degrees(atof(fields[2]));
@@ -186,6 +244,9 @@ static void parse_gns(const char *nmea) {
         double lon = convert_to_decimal_degrees(atof(fields[4]));
         if (fields[5][0] == 'W') lon = -lon;
         g_gps_data.longitude = lon;
+
+        // Вычисляем timezone offset от долготы
+        g_gps_data.timezone_offset_minutes = estimate_timezone_offset_from_longitude(lon);
     }
 
     // Field 7: Mode indicators (GPS,GLONASS,Galileo,BDS,QZSS,NavIC)
@@ -309,6 +370,7 @@ static void parse_gsv(const char *nmea) {
 /**
  * @brief Парсер GSA для используемых спутников
  * Формат: $GPGSA,mode,fixType,sv1,...,sv12,PDOP,HDOP,VDOP*cs
+ * Формат GNGSA: $GNGSA,mode,fixType,sv1,...,sv12,PDOP,HDOP,VDOP,systemID*cs
  */
 static void parse_gsa(const char *nmea) {
     strncpy(nmea_parse_buffer, nmea, sizeof(nmea_parse_buffer) - 1);
@@ -340,6 +402,38 @@ static void parse_gsa(const char *nmea) {
     } else if (strncmp(nmea, "$GBGSA", 6) == 0) {
         g_sat_data.beidou.used = used;
         g_sat_data.beidou.lastUpdate = now;
+    } else if (strncmp(nmea, "$GNGSA", 6) == 0) {
+        // GNGSA - комбинированное сообщение с System ID в поле 18
+        // System ID: 1=GPS, 2=GLONASS, 3=Galileo, 4=BeiDou, 5=QZSS, 6=NavIC
+        if (n > 18 && fields[18] && *fields[18]) {
+            int system_id = atoi(fields[18]);
+
+            switch (system_id) {
+                case 1:  // GPS
+                    g_sat_data.gps.used = used;
+                    g_sat_data.gps.lastUpdate = now;
+                    break;
+                case 2:  // GLONASS
+                    g_sat_data.glonass.used = used;
+                    g_sat_data.glonass.lastUpdate = now;
+                    break;
+                case 3:  // Galileo
+                    g_sat_data.galileo.used = used;
+                    g_sat_data.galileo.lastUpdate = now;
+                    break;
+                case 4:  // BeiDou
+                    g_sat_data.beidou.used = used;
+                    g_sat_data.beidou.lastUpdate = now;
+                    break;
+                case 5:  // QZSS
+                    g_sat_data.qzss.used = used;
+                    g_sat_data.qzss.lastUpdate = now;
+                    break;
+                default:
+                    ESP_LOGW(TAG, "Unknown GNGSA System ID: %d", system_id);
+                    break;
+            }
+        }
     }
 }
 
