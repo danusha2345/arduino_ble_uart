@@ -27,13 +27,9 @@ static const char *TAG = "Display";
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static lv_disp_t *disp = NULL;
 
-// LVGL UI элементы
-static lv_obj_t *label_lat = NULL;
-static lv_obj_t *label_lon = NULL;
-static lv_obj_t *label_alt = NULL;
-static lv_obj_t *label_sat = NULL;
-static lv_obj_t *label_fix = NULL;
-static lv_obj_t *label_status = NULL;
+// LVGL UI элементы (больше строк для экрана 240x280)
+static lv_obj_t *label_line[12];  // 12 строк текста
+static int num_lines = 12;
 
 // ==================================================
 // LVGL TICK CALLBACK
@@ -227,56 +223,32 @@ static esp_err_t init_lvgl(void) {
 // ==================================================
 
 /**
- * @brief Создание пользовательского интерфейса
+ * @brief Создание пользовательского интерфейса для экрана 240x280
  */
 static void create_ui(void) {
-    ESP_LOGI(TAG, "Creating UI...");
+    ESP_LOGI(TAG, "Creating UI for 240x280 display...");
 
     // Основной экран с черным фоном
     lv_obj_t *screen = lv_scr_act();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
 
-    // Заголовок
-    lv_obj_t *label_title = lv_label_create(screen);
-    lv_label_set_text(label_title, "GNSS Bridge");
-    lv_obj_set_style_text_color(label_title, lv_color_white(), 0);
-    lv_obj_align(label_title, LV_ALIGN_TOP_MID, 0, 5);
+    // Создаем 12 строк белого текста на черном фоне
+    // Высота экрана 280px / 12 строк = ~23px на строку
+    int y_pos = 2;
+    int line_height = 23;
 
-    // Статус подключения
-    label_status = lv_label_create(screen);
-    lv_label_set_text(label_status, "Status: Waiting...");
-    lv_obj_set_style_text_color(label_status, lv_color_make(255, 255, 0), 0);
-    lv_obj_align(label_status, LV_ALIGN_TOP_LEFT, 5, 25);
+    for (int i = 0; i < num_lines; i++) {
+        label_line[i] = lv_label_create(screen);
+        lv_label_set_text(label_line[i], "");
+        lv_obj_set_style_text_color(label_line[i], lv_color_white(), 0);
+        lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, 3, y_pos);
+        y_pos += line_height;
+    }
 
-    // Координаты и данные GPS
-    label_lat = lv_label_create(screen);
-    lv_label_set_text(label_lat, "Lat: --");
-    lv_obj_set_style_text_color(label_lat, lv_color_white(), 0);
-    lv_obj_align(label_lat, LV_ALIGN_TOP_LEFT, 5, 50);
+    // Инициализируем первую строку
+    lv_label_set_text(label_line[0], "GNSS Bridge");
 
-    label_lon = lv_label_create(screen);
-    lv_label_set_text(label_lon, "Lon: --");
-    lv_obj_set_style_text_color(label_lon, lv_color_white(), 0);
-    lv_obj_align(label_lon, LV_ALIGN_TOP_LEFT, 5, 70);
-
-    label_alt = lv_label_create(screen);
-    lv_label_set_text(label_alt, "Alt: --");
-    lv_obj_set_style_text_color(label_alt, lv_color_white(), 0);
-    lv_obj_align(label_alt, LV_ALIGN_TOP_LEFT, 5, 90);
-
-    // Спутники
-    label_sat = lv_label_create(screen);
-    lv_label_set_text(label_sat, "Satellites: 0");
-    lv_obj_set_style_text_color(label_sat, lv_color_make(0, 255, 255), 0);
-    lv_obj_align(label_sat, LV_ALIGN_TOP_LEFT, 5, 115);
-
-    // Тип фиксации
-    label_fix = lv_label_create(screen);
-    lv_label_set_text(label_fix, "Fix: NO FIX");
-    lv_obj_set_style_text_color(label_fix, lv_color_make(255, 100, 100), 0);
-    lv_obj_align(label_fix, LV_ALIGN_TOP_LEFT, 5, 135);
-
-    ESP_LOGI(TAG, "UI created successfully");
+    ESP_LOGI(TAG, "UI created - 12 lines for 240x280 display");
 }
 
 // ==================================================
@@ -284,67 +256,114 @@ static void create_ui(void) {
 // ==================================================
 
 /**
- * @brief Обновление данных GPS на дисплее
+ * @brief Обновление данных GPS на дисплее (полная информация для 240x280)
  */
 void display_update_gps_data(void) {
-    static char buf[64];
+    static char buf[48];
 
-    if (!label_lat || !label_lon || !label_alt || !label_sat || !label_fix || !label_status) {
+    if (!label_line[0]) {
         return;  // UI еще не создан
     }
 
-    // Обновляем статус
+    // Проверяем валидность GPS данных
     uint32_t now = esp_timer_get_time() / 1000;
-    if (g_gps_data.valid && (now - g_gps_data.last_update) < GPS_TIMEOUT_MS) {
-        lv_label_set_text(label_status, "Status: GPS OK");
-        lv_obj_set_style_text_color(label_status, lv_color_make(0, 255, 0), 0);
-    } else {
-        lv_label_set_text(label_status, "Status: No GPS");
-        lv_obj_set_style_text_color(label_status, lv_color_make(255, 0, 0), 0);
-    }
+    bool gps_valid = g_gps_data.valid && (now - g_gps_data.last_update) < GPS_TIMEOUT_MS;
 
-    // Обновляем координаты
-    if (g_gps_data.valid) {
-        snprintf(buf, sizeof(buf), "Lat: %.7f", g_gps_data.latitude);
-        lv_label_set_text(label_lat, buf);
+    int line = 0;
 
-        snprintf(buf, sizeof(buf), "Lon: %.7f", g_gps_data.longitude);
-        lv_label_set_text(label_lon, buf);
+    if (gps_valid) {
+        // GPS валиден - отображаем полные данные
 
+        // Строка 0: Заголовок + статус
+        lv_label_set_text(label_line[line++], "=== GNSS Bridge ===");
+
+        // Строка 1: Спутники и тип фикса
+        const char *fix_text[] = {
+            "NO FIX", "GPS", "DGPS", "PPS",
+            "RTK FIXED", "RTK FLOAT"
+        };
+        int fix_idx = g_gps_data.fix_quality;
+        if (fix_idx < 0 || fix_idx > 5) fix_idx = 0;
+
+        snprintf(buf, sizeof(buf), "Sats:%d Fix:%s",
+                 g_gps_data.satellites, fix_text[fix_idx]);
+        lv_label_set_text(label_line[line++], buf);
+
+        // Строка 2: Пустая строка (разделитель)
+        lv_label_set_text(label_line[line++], "");
+
+        // Строка 3: Широта
+        snprintf(buf, sizeof(buf), "Lat: %.8f", g_gps_data.latitude);
+        lv_label_set_text(label_line[line++], buf);
+
+        // Строка 4: Долгота
+        snprintf(buf, sizeof(buf), "Lon: %.8f", g_gps_data.longitude);
+        lv_label_set_text(label_line[line++], buf);
+
+        // Строка 5: Высота
         snprintf(buf, sizeof(buf), "Alt: %.2f m", g_gps_data.altitude);
-        lv_label_set_text(label_alt, buf);
+        lv_label_set_text(label_line[line++], buf);
+
+        // Строка 6: Пустая строка (разделитель)
+        lv_label_set_text(label_line[line++], "");
+
+        // Строка 7: Точность Lat/Lon (если доступна)
+        if (g_gps_data.lat_accuracy < 999.0) {
+            snprintf(buf, sizeof(buf), "Acc N/S: %.3f m", g_gps_data.lat_accuracy);
+            lv_label_set_text(label_line[line++], buf);
+
+            snprintf(buf, sizeof(buf), "Acc E/W: %.3f m", g_gps_data.lon_accuracy);
+            lv_label_set_text(label_line[line++], buf);
+        } else {
+            lv_label_set_text(label_line[line++], "Acc: N/A");
+            line++;  // Пропускаем еще одну строку
+        }
+
+        // Строка 9: Вертикальная точность
+        if (g_gps_data.vert_accuracy < 999.0) {
+            snprintf(buf, sizeof(buf), "Acc Vert: %.3f m", g_gps_data.vert_accuracy);
+            lv_label_set_text(label_line[line++], buf);
+        } else {
+            line++;  // Пропускаем строку
+        }
+
+        // Оставшиеся строки - очищаем
+        for (; line < num_lines; line++) {
+            lv_label_set_text(label_line[line], "");
+        }
+
     } else {
-        lv_label_set_text(label_lat, "Lat: --");
-        lv_label_set_text(label_lon, "Lon: --");
-        lv_label_set_text(label_alt, "Alt: --");
-    }
+        // GPS не валиден - отображаем статус поиска
 
-    // Обновляем спутники
-    snprintf(buf, sizeof(buf), "Satellites: %d", g_gps_data.satellites);
-    lv_label_set_text(label_sat, buf);
+        // Строка 0: Заголовок
+        lv_label_set_text(label_line[line++], "=== GNSS Bridge ===");
 
-    // Обновляем тип фиксации
-    const char *fix_text[] = {
-        "Fix: NO FIX",      // 0
-        "Fix: GPS",         // 1
-        "Fix: DGPS",        // 2
-        "Fix: PPS",         // 3
-        "Fix: RTK FIXED",   // 4
-        "Fix: RTK FLOAT"    // 5
-    };
+        // Строка 1: Статус
+        const char *fix_text[] = {
+            "NO FIX", "GPS", "DGPS", "PPS",
+            "RTK FIXED", "RTK FLOAT"
+        };
+        int fix_idx = g_gps_data.fix_quality;
+        if (fix_idx < 0 || fix_idx > 5) fix_idx = 0;
 
-    int fix_idx = g_gps_data.fix_quality;
-    if (fix_idx < 0 || fix_idx > 5) fix_idx = 0;
+        snprintf(buf, sizeof(buf), "Status: %s", fix_text[fix_idx]);
+        lv_label_set_text(label_line[line++], buf);
 
-    lv_label_set_text(label_fix, fix_text[fix_idx]);
+        // Строка 2: Пустая
+        lv_label_set_text(label_line[line++], "");
 
-    // Цвет в зависимости от качества фиксации
-    if (fix_idx >= 4) {
-        lv_obj_set_style_text_color(label_fix, lv_color_make(0, 255, 0), 0);  // Зеленый для RTK
-    } else if (fix_idx >= 1) {
-        lv_obj_set_style_text_color(label_fix, lv_color_make(255, 255, 0), 0);  // Желтый для GPS
-    } else {
-        lv_obj_set_style_text_color(label_fix, lv_color_make(255, 0, 0), 0);  // Красный для NO FIX
+        // Строка 3: Количество спутников или поиск
+        if (g_gps_data.satellites > 0) {
+            snprintf(buf, sizeof(buf), "Satellites: %d", g_gps_data.satellites);
+            lv_label_set_text(label_line[line++], buf);
+        } else {
+            lv_label_set_text(label_line[line++], "Searching GPS...");
+        }
+
+        // Оставшиеся строки - очищаем
+        for (; line < num_lines; line++) {
+            lv_label_set_text(label_line[line], "");
+        }
     }
 }
 
