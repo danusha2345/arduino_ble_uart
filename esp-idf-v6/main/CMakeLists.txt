@@ -6,17 +6,22 @@ idf_component_register(
         "gps_parser.c"
         "display_manager.c"
     INCLUDE_DIRS "."
-    REQUIRES
+    PRIV_REQUIRES
         nvs_flash
         esp_wifi
         esp_netif
         lwip
         bt
         driver
+        esp_driver_uart
+        esp_driver_spi
+        esp_driver_gpio
+        esp_driver_i2c
         esp_lcd
         spi_flash
         freertos
         lvgl
+        esp_event
 )
 
 # Определения для компиляции

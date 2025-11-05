@@ -18,6 +18,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 
 #include "config.h"
+#include "common.h"
 
 static const char *TAG = "BLE";
 
@@ -39,10 +40,6 @@ static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t tx_char_val_handle;
 static bool notify_enabled = false;
 
-// Внешние буферы из main.c
-extern ring_buffer_t *g_ble_tx_buffer;
-extern ring_buffer_t *g_ble_rx_buffer;
-
 /**
  * @brief Callback для TX характеристики
  */
@@ -54,10 +51,8 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
         return 0;
 
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
-        // Client подписался на уведомления
-        if (ctxt->dsc->uuid.u.type == BLE_UUID_TYPE_16 &&
-            ble_uuid_u16(&ctxt->dsc->uuid) == BLE_GATT_DSC_CLT_CFG_UUID16) {
-
+        // Client подписался на уведомления (CCCD)
+        {
             uint16_t val;
             os_mbuf_copydata(ctxt->om, 0, sizeof(val), &val);
             notify_enabled = (val == 1);

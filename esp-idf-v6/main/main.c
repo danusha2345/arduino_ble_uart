@@ -21,7 +21,7 @@
 #include "nvs_flash.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
-#include "driver/i2c.h"
+// #include "driver/i2c.h" // Устарело в ESP-IDF v6, не нужно для ESP32-C6
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
@@ -29,73 +29,22 @@
 #include "lvgl.h"
 
 #include "config.h"
+#include "common.h"
 
 // Теги для логирования
 static const char *TAG = "MAIN";
 
 // ==================================================
-// СТРУКТУРЫ ДАННЫХ
-// ==================================================
-
-/**
- * @brief Информация о спутниках для каждой GNSS системы
- */
-typedef struct {
-    int visible;        // Видимые спутники (из GSV)
-    int used;          // Используемые спутники (из GSA)
-    uint32_t lastUpdate;
-} sat_info_t;
-
-/**
- * @brief Данные GPS/GNSS
- */
-typedef struct {
-    double latitude;
-    double longitude;
-    double altitude;
-    double lat_accuracy;
-    double lon_accuracy;
-    double vert_accuracy;
-    int satellites;
-    int fix_quality;    // 0=NO FIX, 1=GPS, 2=DGPS, 4=RTK FIXED, 5=RTK FLOAT
-    bool valid;
-    uint32_t last_update;
-    uint32_t last_gst_update;
-} gps_data_t;
-
-/**
- * @brief Данные спутников по системам
- */
-typedef struct {
-    sat_info_t gps;
-    sat_info_t glonass;
-    sat_info_t galileo;
-    sat_info_t beidou;
-    sat_info_t qzss;
-} sat_data_t;
-
-/**
- * @brief Кольцевой буфер для BLE/WiFi данных
- */
-typedef struct {
-    uint8_t *data;
-    volatile size_t head;
-    volatile size_t tail;
-    volatile bool overflow;
-    size_t size;
-    SemaphoreHandle_t mutex;
-} ring_buffer_t;
-
-// ==================================================
 // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 // ==================================================
 
-static gps_data_t g_gps_data = {0};
-static sat_data_t g_sat_data = {0};
+// GPS данные (используются в gps_parser и display_manager через extern)
+gps_data_t g_gps_data = {0};
+sat_data_t g_sat_data = {0};
 
-// Буферы для данных
-static ring_buffer_t *g_ble_tx_buffer = NULL;  // TX буфер (GNSS -> BLE/WiFi)
-static ring_buffer_t *g_ble_rx_buffer = NULL;  // RX буфер (BLE/WiFi -> GNSS)
+// Буферы для данных (используются в других модулях через extern)
+ring_buffer_t *g_ble_tx_buffer = NULL;  // TX буфер (GNSS -> BLE/WiFi)
+ring_buffer_t *g_ble_rx_buffer = NULL;  // RX буфер (BLE/WiFi -> GNSS)
 
 // Хэндлы задач
 static TaskHandle_t uart_task_handle = NULL;
@@ -233,7 +182,7 @@ esp_err_t init_uart(void) {
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
+        // .source_clk использует UART_SCLK_DEFAULT по умолчанию
     };
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, UART_BUF_SIZE * 2, 0, 0, NULL, 0));
@@ -328,9 +277,31 @@ void app_main(void) {
                            0);  // На C3/C6 одно ядро
 #endif
 
+    // Инициализация и запуск BLE сервиса
+    ESP_LOGI(TAG, "Starting BLE service...");
+    ESP_ERROR_CHECK(ble_service_init());
+    xTaskCreatePinnedToCore(ble_task, "ble_task", 4096, NULL, 5,
+                           &ble_task_handle, 0);
+
+    // Инициализация и запуск WiFi сервиса
+    ESP_LOGI(TAG, "Starting WiFi service...");
+    ESP_ERROR_CHECK(wifi_service_init());
+    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096, NULL, 5,
+                           &wifi_task_handle, 0);
+
+    // Запуск GPS парсера
+    ESP_LOGI(TAG, "Starting GPS parser...");
+    xTaskCreatePinnedToCore(gps_parser_task, "gps_parser", 4096, NULL, 4,
+                           &gps_parser_task_handle, 0);
+
+    // Инициализация и запуск дисплея (опционально)
+    #ifdef TFT_MOSI_PIN
+    ESP_LOGI(TAG, "Starting display manager...");
+    display_manager_init();
+    xTaskCreatePinnedToCore(display_task, "display", 4096, NULL, 3,
+                           &display_task_handle, 0);
+    #endif
+
     ESP_LOGI(TAG, "System initialized successfully");
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
-
-    // TODO: Запустить остальные задачи (BLE, WiFi, Display, GPS Parser)
-    // Они будут добавлены в отдельных файлах
 }
