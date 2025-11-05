@@ -19,6 +19,8 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_bt.h"
+#include "esp_nimble_hci.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 // #include "driver/i2c.h" // Устарело в ESP-IDF v6, не нужно для ESP32-C6
@@ -279,9 +281,32 @@ void app_main(void) {
                            0);  // На C3/C6 одно ядро
 #endif
 
+    // === КРИТИЧЕСКАЯ ИНИЦИАЛИЗАЦИЯ BLUETOOTH КОНТРОЛЛЕРА ===
+    ESP_LOGI(TAG, "Initializing Bluetooth controller for NimBLE...");
+
+    // Инициализация HCI транспорта для NimBLE
+    ret = esp_nimble_hci_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_nimble_hci_init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    // Освобождаем память Classic BT, так как используем только BLE
+    ret = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_bt_controller_mem_release failed: %s (this is OK if already released)",
+                 esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Classic BT memory released");
+    }
+
     // Инициализация и запуск BLE сервиса
     ESP_LOGI(TAG, "Starting BLE service...");
-    ESP_ERROR_CHECK(ble_service_init());
+    ret = ble_service_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE service initialization failed: %s", esp_err_to_name(ret));
+        return;
+    }
     xTaskCreatePinnedToCore(ble_task, "ble_task", 4096, NULL, 5,
                            &ble_task_handle, 0);
 
