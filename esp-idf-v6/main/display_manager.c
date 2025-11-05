@@ -1,6 +1,6 @@
 /**
  * @file display_manager.c
- * @brief Управление TFT дисплеем ST7789V через LVGL v9
+ * @brief Управление TFT дисплеем ST7789V (240x280) через LVGL v9
  */
 
 #include <stdio.h>
@@ -75,7 +75,7 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
  * @brief Инициализация SPI шины и TFT дисплея ST7789V
  */
 static esp_err_t init_spi_display(void) {
-    ESP_LOGI(TAG, "Initializing SPI display ST7789V...");
+    ESP_LOGI(TAG, "Initializing SPI display ST7789V 240x280...");
     ESP_LOGI(TAG, "Pins: MOSI=%d, SCLK=%d, DC=%d, RST=%d, BL=%d",
              TFT_MOSI_PIN, TFT_SCLK_PIN, TFT_DC_PIN, TFT_RST_PIN, TFT_BL_PIN);
 
@@ -149,9 +149,10 @@ static esp_err_t init_spi_display(void) {
     // Инвертируем цвета для правильного отображения
     esp_lcd_panel_invert_color(panel_handle, true);
 
-    // Устанавливаем ориентацию (портретная)
-    esp_lcd_panel_swap_xy(panel_handle, true);
-    esp_lcd_panel_mirror(panel_handle, false, true);
+    // Устанавливаем ориентацию для 240x280 (вертикальная, высота больше ширины)
+    // Для ST7789V с разрешением 240x280 используем стандартную ориентацию
+    esp_lcd_panel_swap_xy(panel_handle, false);
+    esp_lcd_panel_mirror(panel_handle, false, false);
 
     // Включаем дисплей
     esp_lcd_panel_disp_on_off(panel_handle, true);
@@ -180,6 +181,10 @@ static esp_err_t init_spi_display(void) {
 static esp_err_t init_lvgl(void) {
     ESP_LOGI(TAG, "Initializing LVGL v9...");
 
+    // Размеры дисплея ST7789V 240x280
+    const int display_width = 240;
+    const int display_height = 280;
+
     // ========== ШАГ 1: Инициализация LVGL ==========
     lv_init();
     ESP_LOGI(TAG, "LVGL initialized");
@@ -188,15 +193,17 @@ static esp_err_t init_lvgl(void) {
     lv_tick_set_cb(lvgl_get_tick_cb);
 
     // ========== ШАГ 3: Создание дисплея ==========
-    disp = lv_display_create(LCD_H_RES, LCD_V_RES);
+    disp = lv_display_create(display_width, display_height);
     if (!disp) {
         ESP_LOGE(TAG, "Failed to create LVGL display");
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "LVGL display created: %dx%d", LCD_H_RES, LCD_V_RES);
+    ESP_LOGI(TAG, "LVGL display created: %dx%d", display_width, display_height);
 
     // ========== ШАГ 4: Выделение буферов отрисовки ==========
-    size_t buffer_size = LVGL_BUFFER_SIZE * sizeof(lv_color_t);
+    // Буфер на 20 строк для 240 пикселей ширины
+    const size_t buffer_pixels = display_width * 20;
+    size_t buffer_size = buffer_pixels * sizeof(lv_color_t);
     void *buf1 = heap_caps_malloc(buffer_size, MALLOC_CAP_DMA);
     void *buf2 = heap_caps_malloc(buffer_size, MALLOC_CAP_DMA);
 
@@ -204,7 +211,7 @@ static esp_err_t init_lvgl(void) {
         ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "LVGL buffers allocated: %d bytes each", buffer_size);
+    ESP_LOGI(TAG, "LVGL buffers allocated: %d bytes each (%d pixels)", buffer_size, buffer_pixels);
 
     lv_display_set_buffers(disp, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
