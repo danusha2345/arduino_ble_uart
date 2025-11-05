@@ -256,6 +256,35 @@ static void create_ui(void) {
 // ==================================================
 
 /**
+ * @brief Форматирование времени с учетом часового пояса
+ * @param hour Часы UTC
+ * @param minute Минуты UTC
+ * @param second Секунды UTC
+ * @param timezone_offset_minutes Смещение часового пояса в минутах
+ * @param buf Буфер для записи результата
+ * @param buf_size Размер буфера
+ */
+static void format_local_time(int hour, int minute, int second, int timezone_offset_minutes,
+                              char *buf, size_t buf_size) {
+    // Конвертируем время в секунды с начала дня
+    long sec = hour * 3600L + minute * 60L + second;
+
+    // Добавляем смещение часового пояса
+    sec += (long)timezone_offset_minutes * 60L;
+
+    // Нормализуем в пределах 0-86399 (секунды в дне)
+    sec %= 86400L;
+    if (sec < 0) sec += 86400L;
+
+    // Конвертируем обратно в часы/минуты/секунды
+    int hh = (int)(sec / 3600L);
+    int mm = (int)((sec % 3600L) / 60L);
+    int ss = (int)(sec % 60L);
+
+    snprintf(buf, buf_size, "%02d:%02d:%02d", hh, mm, ss);
+}
+
+/**
  * @brief Обновление данных GPS на дисплее (полная информация для 240x280)
  */
 void display_update_gps_data(void) {
@@ -300,8 +329,15 @@ void display_update_gps_data(void) {
         snprintf(buf, sizeof(buf), "Lon: %.8f", g_gps_data.longitude);
         lv_label_set_text(label_line[line++], buf);
 
-        // Строка 5: Высота
-        snprintf(buf, sizeof(buf), "Alt: %.2f m", g_gps_data.altitude);
+        // Строка 5: Высота + время (если доступно)
+        if (g_gps_data.time_valid) {
+            char time_str[16];
+            format_local_time(g_gps_data.hour, g_gps_data.minute, g_gps_data.second,
+                            g_gps_data.timezone_offset_minutes, time_str, sizeof(time_str));
+            snprintf(buf, sizeof(buf), "Alt: %.1fm %s", g_gps_data.altitude, time_str);
+        } else {
+            snprintf(buf, sizeof(buf), "Alt: %.2f m", g_gps_data.altitude);
+        }
         lv_label_set_text(label_line[line++], buf);
 
         // Строка 6: Пустая строка (разделитель)

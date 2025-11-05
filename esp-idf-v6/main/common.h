@@ -40,6 +40,12 @@ typedef struct {
     bool valid;
     uint32_t last_update;
     uint32_t last_gst_update;
+    // Время
+    int hour;           // Часы UTC (0-23)
+    int minute;         // Минуты (0-59)
+    int second;         // Секунды (0-59)
+    int timezone_offset_minutes;  // Смещение часового пояса в минутах
+    bool time_valid;    // Флаг валидности времени
 } gps_data_t;
 
 /**
