@@ -13,6 +13,9 @@
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
 #include "host/ble_gatt.h"
+#include "host/ble_store.h"
+#include "host/ble_hs_pvcy.h"
+#include "store/config/ble_store_config.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
@@ -20,6 +23,10 @@
 
 #include "config.h"
 #include "common.h"
+
+// Forward declarations для NimBLE store config функций (из esp-idf/components/bt)
+void ble_store_config_init(void);
+int ble_store_util_status_rr(struct ble_store_status_event *event, void *arg);
 
 static const char *TAG = "BLE";
 
@@ -53,10 +60,13 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
         // Client подписался на уведомления (CCCD)
         {
-            uint16_t val;
+            uint16_t val = 0;
             os_mbuf_copydata(ctxt->om, 0, sizeof(val), &val);
-            notify_enabled = (val == 1);
-            ESP_LOGI(TAG, "TX Notify %s", notify_enabled ? "enabled" : "disabled");
+            ESP_LOGI(TAG, "CCCD write: value=0x%04x (bytes read=%d)", val, sizeof(val));
+
+            // CCCD: 0x0001 = notifications, 0x0002 = indications, 0x0000 = disabled
+            notify_enabled = (val == 0x0001);
+            ESP_LOGI(TAG, "TX Notify %s (CCCD=0x%04x)", notify_enabled ? "ENABLED" : "DISABLED", val);
         }
         return 0;
 
@@ -103,12 +113,14 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            .min_key_size = 7,  // Минимальный размер ключа шифрования (7-16 байт)
         }, {
             // TX характеристика (NOTIFY) - вторая, только NOTIFY без READ
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
             .flags = BLE_GATT_CHR_F_NOTIFY,
+            .min_key_size = 7,  // Минимальный размер ключа шифрования (7-16 байт)
         }, {
             0,
         } },
@@ -128,14 +140,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
-
-            // Запрашиваем обмен MTU сразу после подключения
-            int rc = ble_gattc_exchange_mtu(conn_handle, NULL, NULL);
-            if (rc != 0) {
-                ESP_LOGW(TAG, "Failed to exchange MTU: %d", rc);
-            } else {
-                ESP_LOGI(TAG, "MTU exchange initiated");
-            }
+            int rc;
 
             // Запрашиваем обновление параметров соединения для максимальной скорости
             // Интервалы 7.5-15 мс для максимальной пропускной способности
@@ -152,24 +157,9 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
                 ESP_LOGW(TAG, "Failed to update connection params: %d", rc);
             }
 
-            // Инициируем процесс безопасности для bonding
-            rc = ble_gap_security_initiate(conn_handle);
-            if (rc == BLE_HS_EALREADY) {
-                // Устройство уже спарено, проверяем статус шифрования
-                ESP_LOGI(TAG, "Device already paired, checking encryption status");
-                struct ble_gap_conn_desc desc;
-                if (ble_gap_conn_find(conn_handle, &desc) == 0 && desc.sec_state.encrypted) {
-                    ESP_LOGI(TAG, "Connection already encrypted with bonded device");
-                } else {
-                    // Повторяем инициацию безопасности
-                    ESP_LOGW(TAG, "Not encrypted, retrying security initiation");
-                    ble_gap_security_initiate(conn_handle);
-                }
-            } else if (rc != 0) {
-                ESP_LOGW(TAG, "Security initiate failed: %d", rc);
-            } else {
-                ESP_LOGI(TAG, "Security/bonding initiated");
-            }
+            // НЕ инициируем security - пусть Android (central) сам запросит pairing
+            // Peripheral не должен инициировать bonding в Just Works режиме
+            ESP_LOGI(TAG, "Connection established, waiting for central to initiate pairing");
         }
         break;
 
@@ -216,9 +206,10 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         // Устройство пытается повторно соединиться - удаляем старую запись bonding
         ESP_LOGI(TAG, "Repeat pairing detected, deleting old bond");
         {
-            int rc = ble_gap_conn_find(event->repeat_pairing.conn_handle, NULL);
+            struct ble_gap_conn_desc desc;
+            int rc = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
             if (rc == 0) {
-                ble_store_util_delete_peer(&event->repeat_pairing.peer_addr);
+                ble_store_util_delete_peer(&desc.peer_id_addr);
             }
         }
         return BLE_GAP_REPEAT_PAIRING_RETRY;
@@ -246,6 +237,12 @@ static void ble_advertise(void) {
     fields.name = (uint8_t *)BLE_DEVICE_NAME;
     fields.name_len = strlen(BLE_DEVICE_NAME);
     fields.name_is_complete = 1;
+
+    // КРИТИЧЕСКИ ВАЖНО! Включаем Service UUID в advertising
+    // чтобы Android приложения могли найти Nordic UART Service
+    fields.uuids128 = &gatt_svr_svc_uuid;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1;
 
     ble_gap_adv_set_fields(&fields);
 
@@ -308,16 +305,19 @@ esp_err_t ble_service_init(void) {
     // ШАГ 2: Настройка параметров безопасности для спаривания
     ble_hs_cfg.sync_cb = on_ble_sync;
     ble_hs_cfg.gatts_register_cb = NULL;
-    ble_hs_cfg.store_status_cb = NULL;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
     // Параметры безопасности - включаем bonding для запоминания устройства
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;  // Без UI (нет дисплея/кнопок) - Just Works
     ble_hs_cfg.sm_bonding = 1;                          // Включить bonding (сохраняем ключи)
     ble_hs_cfg.sm_mitm = 0;                             // Отключить MITM (нет UI для подтверждения)
-    ble_hs_cfg.sm_sc = 0;                               // Отключить SC - используем Legacy pairing для совместимости
-    ble_hs_cfg.sm_min_key_size = 7;                     // Минимальная длина ключа для Legacy pairing (7-16 байт)
-    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
-    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
+    ble_hs_cfg.sm_sc = 1;                               // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
+    ble_hs_cfg.sm_keypress = 0;                         // Отключить keypress notifications
+
+    // КРИТИЧЕСКИ ВАЖНО для bonding: распространяем ВСЕ типы ключей
+    // ENC - encryption, ID - identity (IRK), SIGN - signing (CSRK)
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID | BLE_SM_PAIR_KEY_DIST_SIGN;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID | BLE_SM_PAIR_KEY_DIST_SIGN;
 
     ESP_LOGI(TAG, "Security configured: Bonding=%d, MITM=%d, SC=%d",
              ble_hs_cfg.sm_bonding, ble_hs_cfg.sm_mitm, ble_hs_cfg.sm_sc);
@@ -343,6 +343,11 @@ esp_err_t ble_service_init(void) {
     if (ret != 0) {
         ESP_LOGW(TAG, "Failed to set device name: %d", ret);
     }
+
+    // ШАГ 4.5: КРИТИЧЕСКИ ВАЖНО! Инициализация хранилища для bonding ключей
+    // Без этого bonding не будет работать - ключи негде сохранять!
+    ble_store_config_init();
+    ESP_LOGI(TAG, "Bonding storage initialized (NVS)");
 
     // ШАГ 5: Запуск NimBLE host task
     nimble_port_freertos_init(ble_host_task);
@@ -389,6 +394,21 @@ void ble_task(void *pvParameters) {
                             ESP_LOGW(TAG, "Notify failed: %d", rc);
                         }
                     }
+                }
+            }
+        } else {
+            // Диагностика: почему не отправляем данные?
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
+            if (avail > 0) {
+                static uint32_t last_warn = 0;
+                uint32_t now = xTaskGetTickCount();
+                if (now - last_warn > pdMS_TO_TICKS(2000)) {  // Предупреждение раз в 2 секунды
+                    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+                        ESP_LOGW(TAG, "TX buffer has %d bytes but NO BLE connection!", avail);
+                    } else if (!notify_enabled) {
+                        ESP_LOGW(TAG, "TX buffer has %d bytes but notifications NOT ENABLED by app!", avail);
+                    }
+                    last_warn = now;
                 }
             }
         }
