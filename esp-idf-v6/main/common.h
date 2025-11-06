@@ -115,4 +115,5 @@ void display_task(void *pvParameters);
 // ==================================================
 
 esp_err_t parse_nmea_sentence(const char *sentence);
-void gps_parser_task(void *pvParameters);
+void gps_parse_byte(uint8_t byte);  // Парсинг побайтно (вызывается из UART task)
+void gps_parser_task(void *pvParameters);  // Задача мониторинга (таймауты, логи)

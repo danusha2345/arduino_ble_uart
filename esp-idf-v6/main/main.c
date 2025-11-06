@@ -198,6 +198,9 @@ esp_err_t init_uart(void) {
 // ЗАДАЧА UART
 // ==================================================
 
+// Forward declaration для GPS парсинга
+extern void gps_parse_byte(uint8_t byte);
+
 /**
  * @brief Задача обработки UART
  * Читает данные из GPS и пишет в TX буфер
@@ -213,9 +216,16 @@ static void uart_task(void *pvParameters) {
         // Читаем данные из GPS
         int len = uart_read_bytes(UART_NUM_1, uart_data, UART_BUF_SIZE,
                                    pdMS_TO_TICKS(20));
-        if (len > 0 && g_ble_tx_buffer) {
-            // Записываем в TX буфер для отправки по BLE/WiFi
-            ring_buffer_write(g_ble_tx_buffer, uart_data, len);
+        if (len > 0) {
+            // 1. Записываем в TX буфер для СКВОЗНОЙ передачи по BLE/WiFi
+            if (g_ble_tx_buffer) {
+                ring_buffer_write(g_ble_tx_buffer, uart_data, len);
+            }
+
+            // 2. Парсим ту же копию для дисплея (не трогаем g_ble_tx_buffer!)
+            for (int i = 0; i < len; i++) {
+                gps_parse_byte(uart_data[i]);
+            }
         }
 
         // Проверяем буфер RX на наличие команд от BLE/WiFi

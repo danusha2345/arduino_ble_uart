@@ -482,53 +482,47 @@ static void check_satellite_timeouts(void) {
 }
 
 // ==================================================
-// ЗАДАЧА GPS ПАРСЕРА
+// ФУНКЦИЯ ПАРСИНГА ПО БАЙТАМ (вызывается из UART task)
 // ==================================================
 
 /**
- * @brief Задача парсинга GPS данных из TX буфера
+ * @brief Парсинг GPS данных побайтно (вызывается из UART task)
+ * Эта функция НЕ читает из g_ble_tx_buffer - данные передаются напрямую!
+ * g_ble_tx_buffer используется только для СКВОЗНОЙ передачи BLE/WiFi
+ */
+void gps_parse_byte(uint8_t byte) {
+    // Собираем NMEA строку
+    if (byte == '\n') {
+        // Конец строки
+        nmea_line_buffer[nmea_line_pos] = '\0';
+
+        // Парсим если строка не пустая и начинается с '$'
+        if (nmea_line_pos > 0 && nmea_line_buffer[0] == '$') {
+            parse_nmea(nmea_line_buffer);
+        }
+
+        nmea_line_pos = 0;
+    }
+    else if (byte != '\r') {
+        // Добавляем символ в буфер (игнорируем '\r')
+        if (nmea_line_pos < NMEA_LINE_BUFFER_SIZE - 1) {
+            nmea_line_buffer[nmea_line_pos++] = byte;
+        } else {
+            // Переполнение - сбрасываем буфер
+            nmea_line_pos = 0;
+        }
+    }
+}
+
+/**
+ * @brief Задача мониторинга GPS (таймауты и логирование)
  */
 void gps_parser_task(void *pvParameters) {
     ESP_LOGI(TAG, "GPS Parser task started on core %d", xPortGetCoreID());
 
-    uint8_t byte;
     uint32_t last_timeout_check = 0;
 
     while (1) {
-        // Читаем байты из TX буфера (который содержит данные от GPS модуля)
-        if (g_ble_tx_buffer) {
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-
-        if (avail > 0) {
-            // Читаем по одному байту для построчного парсинга
-            size_t read = ring_buffer_read(g_ble_tx_buffer, &byte, 1);
-
-            if (read > 0) {
-                // Собираем NMEA строку
-                if (byte == '\n') {
-                    // Конец строки
-                    nmea_line_buffer[nmea_line_pos] = '\0';
-
-                    // Парсим если строка не пустая и начинается с '$'
-                    if (nmea_line_pos > 0 && nmea_line_buffer[0] == '$') {
-                        parse_nmea(nmea_line_buffer);
-                    }
-
-                    nmea_line_pos = 0;
-                }
-                else if (byte != '\r') {
-                    // Добавляем символ в буфер (игнорируем '\r')
-                    if (nmea_line_pos < NMEA_LINE_BUFFER_SIZE - 1) {
-                        nmea_line_buffer[nmea_line_pos++] = byte;
-                    } else {
-                        // Переполнение - сбрасываем буфер
-                        nmea_line_pos = 0;
-                    }
-                }
-            }
-        }
-        }
-
         // Проверяем таймауты раз в секунду
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_timeout_check > 1000) {
@@ -546,8 +540,8 @@ void gps_parser_task(void *pvParameters) {
             }
         }
 
-        // Небольшая задержка
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // Задержка 1 секунда
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     vTaskDelete(NULL);
