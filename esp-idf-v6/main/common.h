@@ -94,14 +94,14 @@ size_t ring_buffer_available(ring_buffer_t *rb);
 // ==================================================
 
 esp_err_t ble_service_init(void);
-void ble_task(void *pvParameters);
+void ble_broadcast_data(const uint8_t *data, size_t len);  // Отправка данных по BLE
 
 // ==================================================
 // WIFI SERVICE
 // ==================================================
 
 esp_err_t wifi_service_init(void);
-void wifi_task(void *pvParameters);
+void wifi_broadcast_data(const uint8_t *data, size_t len);  // Отправка данных всем WiFi клиентам
 
 // ==================================================
 // DISPLAY MANAGER
@@ -115,4 +115,5 @@ void display_task(void *pvParameters);
 // ==================================================
 
 esp_err_t parse_nmea_sentence(const char *sentence);
-void gps_parser_task(void *pvParameters);
+void gps_parse_byte(uint8_t byte);  // Парсинг побайтно (вызывается из UART task)
+void gps_parser_task(void *pvParameters);  // Задача мониторинга (таймауты, логи)
