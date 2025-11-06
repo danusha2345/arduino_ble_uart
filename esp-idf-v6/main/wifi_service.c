@@ -135,6 +135,9 @@ esp_err_t wifi_service_init(void) {
 
     ESP_LOGI(TAG, "WiFi AP started: SSID=%s", WIFI_AP_SSID);
 
+    // Запускаем задачу обработки подключений
+    xTaskCreatePinnedToCore(wifi_connection_task, "wifi_conn", 4096, NULL, 5, NULL, 0);
+
     return ESP_OK;
 }
 
@@ -173,9 +176,12 @@ static int start_tcp_server(void) {
 }
 
 /**
- * @brief Отправка данных всем клиентам
+ * @brief Отправка данных всем клиентам (вызывается из broadcast_task)
+ * НЕ читает из g_ble_tx_buffer - получает данные готовыми!
  */
-static void send_to_clients(const uint8_t *data, size_t len) {
+void wifi_broadcast_data(const uint8_t *data, size_t len) {
+    if (!data || len == 0) return;
+
     bool client_disconnected = false;
 
     for (int i = 0; i < MAX_WIFI_CLIENTS; i++) {
@@ -198,9 +204,11 @@ static void send_to_clients(const uint8_t *data, size_t len) {
 
 /**
  * @brief Задача обработки WiFi клиентов
+ * Обрабатывает входящие подключения и принимает данные от клиентов
+ * Отправка данных клиентам происходит через wifi_broadcast_data()
  */
-void wifi_task(void *pvParameters) {
-    ESP_LOGI(TAG, "WiFi task started on core %d", xPortGetCoreID());
+static void wifi_connection_task(void *pvParameters) {
+    ESP_LOGI(TAG, "WiFi connection task started on core %d", xPortGetCoreID());
 
     // Запускаем TCP сервер
     if (start_tcp_server() < 0) {
@@ -213,7 +221,6 @@ void wifi_task(void *pvParameters) {
     int flags = fcntl(server_socket, F_GETFL, 0);
     fcntl(server_socket, F_SETFL, flags | O_NONBLOCK);
 
-    uint8_t tx_buffer[512];
     uint8_t rx_buffer[512];
 
     while (1) {
@@ -249,18 +256,6 @@ void wifi_task(void *pvParameters) {
             } else {
                 ESP_LOGW(TAG, "No free slots for new client");
                 close(new_client);
-            }
-        }
-
-        // Отправляем данные из TX буфера всем клиентам
-        if (g_ble_tx_buffer) {
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-            if (avail > 0) {
-                size_t to_read = avail > sizeof(tx_buffer) ? sizeof(tx_buffer) : avail;
-                size_t read = ring_buffer_read(g_ble_tx_buffer, tx_buffer, to_read);
-                if (read > 0) {
-                    send_to_clients(tx_buffer, read);
-                }
             }
         }
 

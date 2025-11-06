@@ -94,14 +94,14 @@ size_t ring_buffer_available(ring_buffer_t *rb);
 // ==================================================
 
 esp_err_t ble_service_init(void);
-void ble_task(void *pvParameters);
+void ble_broadcast_data(const uint8_t *data, size_t len);  // Отправка данных по BLE
 
 // ==================================================
 // WIFI SERVICE
 // ==================================================
 
 esp_err_t wifi_service_init(void);
-void wifi_task(void *pvParameters);
+void wifi_broadcast_data(const uint8_t *data, size_t len);  // Отправка данных всем WiFi клиентам
 
 // ==================================================
 // DISPLAY MANAGER

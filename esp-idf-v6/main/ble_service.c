@@ -357,64 +357,49 @@ esp_err_t ble_service_init(void) {
 }
 
 /**
- * @brief Задача отправки данных по BLE
+ * @brief Отправка данных по BLE (вызывается из broadcast_task)
+ * НЕ читает из g_ble_tx_buffer - получает данные готовыми!
  */
-void ble_task(void *pvParameters) {
-    ESP_LOGI(TAG, "BLE task started on core %d", xPortGetCoreID());
+void ble_broadcast_data(const uint8_t *data, size_t len) {
+    if (!data || len == 0) return;
 
-    uint8_t buffer[512];
-
-    while (1) {
-        // Явная проверка инициализации буферов
-        if (!g_ble_tx_buffer || !g_ble_rx_buffer) {
-            ESP_LOGE(TAG, "BLE buffers not initialized!");
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        // Проверяем подключение и уведомления
-        if (conn_handle != BLE_HS_CONN_HANDLE_NONE && notify_enabled) {
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-
-            if (avail > 0) {
-                // Получаем MTU
-                uint16_t mtu = ble_att_mtu(conn_handle);
-                size_t max_len = mtu - 3; // ATT header
-
-                if (max_len > sizeof(buffer)) max_len = sizeof(buffer);
-
-                size_t to_send = avail > max_len ? max_len : avail;
-                size_t read = ring_buffer_read(g_ble_tx_buffer, buffer, to_send);
-
-                if (read > 0) {
-                    struct os_mbuf *om = ble_hs_mbuf_from_flat(buffer, read);
-                    if (om) {
-                        int rc = ble_gatts_notify_custom(conn_handle, tx_char_val_handle, om);
-                        if (rc != 0) {
-                            ESP_LOGW(TAG, "Notify failed: %d", rc);
-                        }
-                    }
-                }
+    // Проверяем подключение и уведомления
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || !notify_enabled) {
+        // Диагностика (но не слишком часто)
+        static uint32_t last_warn = 0;
+        uint32_t now = xTaskGetTickCount();
+        if (now - last_warn > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
+            if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+                ESP_LOGD(TAG, "BLE not connected, skipping %d bytes", len);
+            } else if (!notify_enabled) {
+                ESP_LOGD(TAG, "BLE notifications not enabled, skipping %d bytes", len);
             }
-        } else {
-            // Диагностика: почему не отправляем данные?
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-            if (avail > 0) {
-                static uint32_t last_warn = 0;
-                uint32_t now = xTaskGetTickCount();
-                if (now - last_warn > pdMS_TO_TICKS(2000)) {  // Предупреждение раз в 2 секунды
-                    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-                        ESP_LOGW(TAG, "TX buffer has %d bytes but NO BLE connection!", avail);
-                    } else if (!notify_enabled) {
-                        ESP_LOGW(TAG, "TX buffer has %d bytes but notifications NOT ENABLED by app!", avail);
-                    }
-                    last_warn = now;
-                }
-            }
+            last_warn = now;
         }
-
-        vTaskDelay(pdMS_TO_TICKS(20));
+        return;
     }
 
-    vTaskDelete(NULL);
+    // Получаем MTU
+    uint16_t mtu = ble_att_mtu(conn_handle);
+    size_t max_payload = mtu - 3; // ATT header = 3 байта
+
+    // Отправляем данные порциями по MTU
+    size_t offset = 0;
+    while (offset < len) {
+        size_t chunk_size = (len - offset) > max_payload ? max_payload : (len - offset);
+
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(data + offset, chunk_size);
+        if (om) {
+            int rc = ble_gatts_notify_custom(conn_handle, tx_char_val_handle, om);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Notify failed: %d", rc);
+                break;  // Прерываем при ошибке
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to allocate mbuf");
+            break;
+        }
+
+        offset += chunk_size;
+    }
 }

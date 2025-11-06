@@ -48,8 +48,7 @@ ring_buffer_t *g_ble_rx_buffer = NULL;  // RX буфер (BLE/WiFi -> GNSS)
 
 // Хэндлы задач
 static TaskHandle_t uart_task_handle = NULL;
-static TaskHandle_t ble_task_handle = NULL;
-static TaskHandle_t wifi_task_handle = NULL;
+static TaskHandle_t broadcast_task_handle = NULL;
 static TaskHandle_t display_task_handle = NULL;
 static TaskHandle_t gps_parser_task_handle = NULL;
 
@@ -195,6 +194,51 @@ esp_err_t init_uart(void) {
 }
 
 // ==================================================
+// ЗАДАЧА BROADCAST (BLE + WiFi)
+// ==================================================
+
+/**
+ * @brief Задача широковещательной рассылки данных
+ * Читает из g_ble_tx_buffer ОДИН РАЗ и отправляет ТУ ЖЕ копию в BLE и WiFi
+ * Решает проблему конкуренции между BLE и WiFi за данные
+ */
+static void broadcast_task(void *pvParameters) {
+    ESP_LOGI(TAG, "Broadcast task started on core %d", xPortGetCoreID());
+
+    uint8_t *broadcast_buffer = malloc(512);  // Буфер для чтения данных
+    if (!broadcast_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate broadcast buffer");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        if (g_ble_tx_buffer) {
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
+
+            if (avail > 0) {
+                // Читаем данные ОДИН РАЗ
+                size_t to_read = avail > 512 ? 512 : avail;
+                size_t read = ring_buffer_read(g_ble_tx_buffer, broadcast_buffer, to_read);
+
+                if (read > 0) {
+                    // Отправляем ТУ ЖЕ копию в BLE
+                    ble_broadcast_data(broadcast_buffer, read);
+
+                    // Отправляем ТУ ЖЕ копию в WiFi (всем клиентам)
+                    wifi_broadcast_data(broadcast_buffer, read);
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    free(broadcast_buffer);
+    vTaskDelete(NULL);
+}
+
+// ==================================================
 // ЗАДАЧА UART
 // ==================================================
 
@@ -231,15 +275,35 @@ static void uart_task(void *pvParameters) {
         // Проверяем буфер RX на наличие команд от BLE/WiFi
         if (g_ble_rx_buffer) {
             size_t rx_avail = ring_buffer_available(g_ble_rx_buffer);
-        if (rx_avail > 0) {
-            size_t to_read = rx_avail > RX_BUFFER_SIZE ? RX_BUFFER_SIZE : rx_avail;
-            size_t read = ring_buffer_read(g_ble_rx_buffer, rx_data, to_read);
+            if (rx_avail > 0) {
+                size_t to_read = rx_avail > RX_BUFFER_SIZE ? RX_BUFFER_SIZE : rx_avail;
+                size_t read = ring_buffer_read(g_ble_rx_buffer, rx_data, to_read);
 
-            if (read > 0) {
-                // Отправляем команды в GPS модуль
-                uart_write_bytes(UART_NUM_1, (const char*)rx_data, read);
+                if (read > 0) {
+                    // Определяем тип данных:
+                    // RTCM3 начинается с 0xD3 (211 decimal) - бинарные поправки
+                    // ASCII команды начинаются с букв/символов ($, #, A-Z, a-z)
+                    bool is_rtcm3 = (read >= 3 && rx_data[0] == 0xD3);
+                    bool is_ascii = (read > 0 &&
+                                    (rx_data[0] == '$' || rx_data[0] == '#' ||
+                                     (rx_data[0] >= 'A' && rx_data[0] <= 'Z') ||
+                                     (rx_data[0] >= 'a' && rx_data[0] <= 'z')));
+
+                    // Отправляем в GPS модуль
+                    uart_write_bytes(UART_NUM_1, (const char*)rx_data, read);
+
+                    // Для ASCII команд добавляем \r\n (если его ещё нет)
+                    if (is_ascii && !is_rtcm3) {
+                        // Проверяем, есть ли уже \r\n в конце
+                        bool has_crlf = (read >= 2 && rx_data[read-2] == '\r' && rx_data[read-1] == '\n') ||
+                                       (read >= 1 && rx_data[read-1] == '\n');
+
+                        if (!has_crlf) {
+                            uart_write_bytes(UART_NUM_1, "\r\n", 2);
+                        }
+                    }
+                }
             }
-        }
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -289,25 +353,21 @@ void app_main(void) {
                            0);  // На C3/C6 одно ядро
 #endif
 
-    // Инициализация и запуск BLE сервиса
-    // ВАЖНО: nimble_port_init() внутри ble_service_init() автоматически:
-    // - Инициализирует BT контроллер (esp_bt_controller_init/enable)
-    // - Вызывает esp_nimble_hci_init() через esp_nimble_init()
-    // - Освобождает память Classic BT
+    // Инициализация BLE и WiFi сервисов
     ESP_LOGI(TAG, "Starting BLE service...");
     ret = ble_service_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE service initialization failed: %s", esp_err_to_name(ret));
         return;
     }
-    xTaskCreatePinnedToCore(ble_task, "ble_task", 4096, NULL, 5,
-                           &ble_task_handle, 0);
 
-    // Инициализация и запуск WiFi сервиса
     ESP_LOGI(TAG, "Starting WiFi service...");
     ESP_ERROR_CHECK(wifi_service_init());
-    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096, NULL, 5,
-                           &wifi_task_handle, 0);
+
+    // Запуск ЕДИНОЙ задачи broadcast для BLE и WiFi
+    // Решает проблему конкуренции за g_ble_tx_buffer
+    xTaskCreatePinnedToCore(broadcast_task, "broadcast", 4096, NULL, 5,
+                           &broadcast_task_handle, 0);
 
     // Запуск GPS парсера
     ESP_LOGI(TAG, "Starting GPS parser...");
