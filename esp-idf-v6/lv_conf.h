@@ -58,6 +58,9 @@
 #define LV_FONT_MONTSERRAT_22 1
 #define LV_FONT_MONTSERRAT_24 1
 
+/* Шрифт по умолчанию */
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
+
 #define LV_FONT_MONTSERRAT_20_COMPRESSED 1
 #define LV_FONT_DEJAVU_18_PERSIAN_HEBREW 1
 
