@@ -95,36 +95,9 @@ static esp_err_t init_spi_display(void) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "SPI bus initialized on SPI2_HOST");
+    ESP_LOGI(TAG, "SPI bus initialized");
 
-    // ========== ТЕСТ: Явная инициализация DC пина ==========
-    // DC (Data/Command): LOW=команда, HIGH=данные
-    // Иногда ESP-IDF не инициализирует DC пин правильно
-    ESP_LOGI(TAG, "Manually initializing DC pin (GPIO %d)...", TFT_DC_PIN);
-    gpio_config_t dc_gpio_config = {
-        .pin_bit_mask = 1ULL << TFT_DC_PIN,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ret = gpio_config(&dc_gpio_config);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure DC GPIO: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    // Тест DC пина - переключаем несколько раз
-    ESP_LOGI(TAG, "Testing DC pin toggle...");
-    for (int i = 0; i < 5; i++) {
-        gpio_set_level(TFT_DC_PIN, 0);
-        vTaskDelay(pdMS_TO_TICKS(10));
-        gpio_set_level(TFT_DC_PIN, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    ESP_LOGI(TAG, "DC pin test complete (toggled 5 times)");
-
-    // ========== ШАГ 2: Настройка Panel IO (DC pin) ==========
+    // ========== ШАГ 2: Panel IO (минимальная конфигурация) ==========
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num = TFT_DC_PIN,
@@ -135,8 +108,6 @@ static esp_err_t init_spi_display(void) {
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
-    ESP_LOGI(TAG, "Panel IO config: DC=%d, CS=%d, PCLK=%d Hz, CMD_BITS=%d, PARAM_BITS=%d",
-             TFT_DC_PIN, TFT_CS_PIN, LCD_PIXEL_CLOCK_HZ, LCD_CMD_BITS, LCD_PARAM_BITS);
 
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
@@ -154,64 +125,29 @@ static esp_err_t init_spi_display(void) {
     };
     ESP_LOGI(TAG, "Panel config: RGB order=BGR, bits_per_pixel=16");
 
-    // КРИТИЧНО: Пробуем найти правильный драйвер для ST7789V3
-    ESP_LOGI(TAG, "Creating panel for ST7789V3...");
-
-    // Пробуем в таком порядке: V3 -> T -> обычный
-    if (esp_lcd_new_panel_st7789v3 != NULL) {
-        ret = esp_lcd_new_panel_st7789v3(io_handle, &panel_config, &panel_handle);
-        ESP_LOGI(TAG, "Using ST7789V3 driver");
-    } else {
-        // Используем обычный ST7789
-        ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
-        ESP_LOGI(TAG, "Using standard ST7789 driver");
-    }
-
+    // Создаём панель ST7789
+    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create panel: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create ST7789 panel: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "Panel created successfully");
+    ESP_LOGI(TAG, "ST7789 panel created");
 
-    // ========== ШАГ 4: Инициализация панели ==========
-    ret = esp_lcd_panel_reset(panel_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Panel reset failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ESP_LOGI(TAG, "Panel reset done, waiting 100ms...");
-    vTaskDelay(pdMS_TO_TICKS(100)); // Задержка после reset
+    // ========== ШАГ 4: Минимальная инициализация (как в рабочем коде) ==========
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+    ESP_LOGI(TAG, "Panel initialized: reset -> init -> mirror(true,false) -> disp_on");
 
-    ret = esp_lcd_panel_init(panel_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Panel init failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ESP_LOGI(TAG, "Panel initialized");
-
-    // ========== ШАГ 5: Настройка - ТОЛЬКО mirror как в рабочем примере ==========
-    // ВАЖНО: НЕ используем set_gap, invert_color, swap_xy - их нет в рабочем коде!
-    ESP_LOGI(TAG, "Setting mirror(true, false) - ONLY this, nothing else!");
-    esp_lcd_panel_mirror(panel_handle, true, false);
-
-    // Включаем дисплей
-    esp_lcd_panel_disp_on_off(panel_handle, true);
-    ESP_LOGI(TAG, "Display turned on");
-
-    // ========== ШАГ 6: Включение подсветки ==========
+    // ========== ШАГ 5: Подсветка ==========
     gpio_config_t bk_gpio_config = {
         .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = 1ULL << TFT_BL_PIN
     };
-    ESP_LOGI(TAG, "Configuring backlight GPIO %d...", TFT_BL_PIN);
-    ret = gpio_config(&bk_gpio_config);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure backlight GPIO: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
+    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
     gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
-    ESP_LOGI(TAG, "Backlight enabled on GPIO %d (level=%d)", TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
+    ESP_LOGI(TAG, "Backlight ON");
 
     // ========== ПРОСТОЙ ТЕСТ: Красный экран ==========
     ESP_LOGI(TAG, "========================================");
