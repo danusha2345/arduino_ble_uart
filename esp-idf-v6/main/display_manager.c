@@ -135,6 +135,8 @@ static esp_err_t init_spi_display(void) {
         ESP_LOGE(TAG, "Panel reset failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    ESP_LOGI(TAG, "Panel reset done, waiting 100ms...");
+    vTaskDelay(pdMS_TO_TICKS(100)); // Задержка после reset
 
     ret = esp_lcd_panel_init(panel_handle);
     if (ret != ESP_OK) {
@@ -142,6 +144,16 @@ static esp_err_t init_spi_display(void) {
         return ret;
     }
     ESP_LOGI(TAG, "Panel initialized");
+
+    // ВАЖНО: Установка GAP (offset) для ST7789V 240x280
+    // Многие дисплеи ST7789V требуют смещения координат
+    // Попробуем разные варианты gap
+    ESP_LOGI(TAG, "Setting display GAP (offset)...");
+
+    // Вариант 1: Gap для стандартного ST7789V 240x280
+    // x_gap=0, y_gap=20 (некоторые дисплеи)
+    esp_lcd_panel_set_gap(panel_handle, 0, 20);
+    ESP_LOGI(TAG, "Gap set: x=0, y=20");
 
     // ========== ШАГ 5: Настройка ориентации ==========
 
