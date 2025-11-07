@@ -94,6 +94,33 @@ static esp_err_t init_spi_display(void) {
     }
     ESP_LOGI(TAG, "SPI bus initialized on SPI2_HOST");
 
+    // ========== ТЕСТ: Явная инициализация DC пина ==========
+    // DC (Data/Command): LOW=команда, HIGH=данные
+    // Иногда ESP-IDF не инициализирует DC пин правильно
+    ESP_LOGI(TAG, "Manually initializing DC pin (GPIO %d)...", TFT_DC_PIN);
+    gpio_config_t dc_gpio_config = {
+        .pin_bit_mask = 1ULL << TFT_DC_PIN,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ret = gpio_config(&dc_gpio_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure DC GPIO: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Тест DC пина - переключаем несколько раз
+    ESP_LOGI(TAG, "Testing DC pin toggle...");
+    for (int i = 0; i < 5; i++) {
+        gpio_set_level(TFT_DC_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        gpio_set_level(TFT_DC_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    ESP_LOGI(TAG, "DC pin test complete (toggled 5 times)");
+
     // ========== ШАГ 2: Настройка Panel IO (DC pin) ==========
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_spi_config_t io_config = {
@@ -105,6 +132,8 @@ static esp_err_t init_spi_display(void) {
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
+    ESP_LOGI(TAG, "Panel IO config: DC=%d, CS=%d, PCLK=%d Hz, CMD_BITS=%d, PARAM_BITS=%d",
+             TFT_DC_PIN, TFT_CS_PIN, LCD_PIXEL_CLOCK_HZ, LCD_CMD_BITS, LCD_PARAM_BITS);
 
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
@@ -147,13 +176,19 @@ static esp_err_t init_spi_display(void) {
 
     // ВАЖНО: Установка GAP (offset) для ST7789V 240x280
     // Многие дисплеи ST7789V требуют смещения координат
-    // Попробуем разные варианты gap
-    ESP_LOGI(TAG, "Setting display GAP (offset)...");
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "CRITICAL: Setting display GAP (offset)");
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "Common ST7789V 240x280 GAP values:");
+    ESP_LOGI(TAG, "  - (0, 0)  = No offset (rare)");
+    ESP_LOGI(TAG, "  - (0, 20) = Standard ST7789V 240x280");
+    ESP_LOGI(TAG, "  - (0, 35) = Some manufacturers");
+    ESP_LOGI(TAG, "  - (0, 80) = If display is actually 240x240");
+    ESP_LOGI(TAG, "========================================");
 
-    // Вариант 1: Gap для стандартного ST7789V 240x280
-    // x_gap=0, y_gap=20 (некоторые дисплеи)
-    esp_lcd_panel_set_gap(panel_handle, 0, 20);
-    ESP_LOGI(TAG, "Gap set: x=0, y=20");
+    // ТЕСТ: Попробуем GAP (0, 0) сначала
+    ESP_LOGI(TAG, "Trying GAP: x=0, y=0 (no offset)");
+    esp_lcd_panel_set_gap(panel_handle, 0, 0);
 
     // ========== ШАГ 5: Настройка ориентации ==========
 
