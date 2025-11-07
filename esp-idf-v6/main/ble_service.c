@@ -143,16 +143,19 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             // RX характеристика (WRITE) - ДОЛЖНА БЫТЬ ПЕРВОЙ по стандарту Nordic UART!
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
+            // Характеристика видна без pairing, но MITM автоматически запросит PIN при записи
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         }, {
             // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
+            // Характеристика видна без pairing, но MITM автоматически запросит PIN при чтении/notify
             .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
+                // CCCD также видимый без pairing
                 .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
                 .access_cb = gatt_svr_chr_access_tx,
             }, {
@@ -194,9 +197,17 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
                 ESP_LOGW(TAG, "Failed to update connection params: %d", rc);
             }
 
-            // НЕ инициируем security - пусть Android (central) сам запросит pairing
-            // Peripheral не должен инициировать bonding в Just Works режиме
-            ESP_LOGI(TAG, "Connection established, waiting for central to initiate pairing");
+            // ВАЖНО: Инициируем pairing сразу при подключении (для Display Only режима)
+            // Это заставит телефон запросить PIN-код ДО GATT discovery
+            ESP_LOGI(TAG, "Connection established, initiating security/pairing...");
+            rc = ble_gap_security_initiate(conn_handle);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Failed to initiate security: %d (error: %s)", rc,
+                         rc == BLE_HS_ENOTCONN ? "not connected" :
+                         rc == BLE_HS_EALREADY ? "already paired/pairing" : "other");
+            } else {
+                ESP_LOGI(TAG, "Security initiation started - waiting for PIN request");
+            }
         }
         break;
 
@@ -223,15 +234,26 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         break;
 
     case BLE_GAP_EVENT_PASSKEY_ACTION:
-        // Just Works pairing - автоматически подтверждаем
+        // Обработка запроса PIN-кода
         ESP_LOGI(TAG, "Passkey action: %d", event->passkey.params.action);
         {
             struct ble_sm_io pkey = {0};
             pkey.action = event->passkey.params.action;
 
-            // Для Just Works просто подтверждаем
-            if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
-                pkey.numcmp_accept = 1;  // Автоматически принимаем
+            // Фиксированный PIN-код (6 цифр, максимум 999999)
+            #define BLE_FIXED_PASSKEY 123456
+
+            if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+                // Display Only - показываем PIN-код
+                pkey.passkey = BLE_FIXED_PASSKEY;
+                ESP_LOGI(TAG, "===========================================");
+                ESP_LOGI(TAG, "  BLE PAIRING PIN CODE: %06lu", (unsigned long)BLE_FIXED_PASSKEY);
+                ESP_LOGI(TAG, "  Введите этот код на телефоне");
+                ESP_LOGI(TAG, "===========================================");
+            } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
+                // Numeric Comparison (для LE Secure Connections с Display+YesNo)
+                pkey.numcmp_accept = 1;
+                ESP_LOGI(TAG, "Numeric comparison: auto-accepting");
             }
 
             int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
@@ -399,10 +421,10 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;  // Callback для логирования регистрации GATT
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
-    // Параметры безопасности - включаем bonding для запоминания устройства
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;  // Без UI (нет дисплея/кнопок) - Just Works
+    // Параметры безопасности - включаем bonding с фиксированным PIN-кодом
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;     // Display Only - показываем PIN (фиксированный)
     ble_hs_cfg.sm_bonding = 1;                          // Включить bonding (сохраняем ключи)
-    ble_hs_cfg.sm_mitm = 0;                             // Отключить MITM (нет UI для подтверждения)
+    ble_hs_cfg.sm_mitm = 1;                             // ВКЛЮЧИТЬ MITM для запроса PIN-кода
     ble_hs_cfg.sm_sc = 1;                               // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
     ble_hs_cfg.sm_keypress = 0;                         // Отключить keypress notifications
 
