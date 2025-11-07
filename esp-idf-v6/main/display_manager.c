@@ -254,7 +254,7 @@ static void create_ui(void) {
     int line_height = 15;  // Межстрочный интервал 31px
     int x_offset = 15;  // Отступ слева 15 пикселей
 
-    // ТЕСТ: ВСЕ СТРОКИ КРАСНЫМ для проверки что изменения работают
+    // Цвета для каждой строки
     lv_color_t line_colors[9] = {
                 lv_color_white(),                           // 0: Заголовок
                 lv_palette_main(LV_PALETTE_YELLOW),        // 1: Спутники/Fix
