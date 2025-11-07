@@ -5,7 +5,8 @@ idf_component_register(
         "wifi_service.c"
         "gps_parser.c"
         "display_manager.c"
-    INCLUDE_DIRS "."
+        "Vernon_ST7789T/Vernon_ST7789T.c"
+    INCLUDE_DIRS "." "Vernon_ST7789T"
     PRIV_REQUIRES
         nvs_flash
         esp_wifi

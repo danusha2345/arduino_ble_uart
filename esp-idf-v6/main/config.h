@@ -58,6 +58,9 @@
     #ifndef CONFIG_C6_TFT_BL_PIN
         #define CONFIG_C6_TFT_BL_PIN 22
     #endif
+    #ifndef CONFIG_C6_TFT_CS_PIN
+        #define CONFIG_C6_TFT_CS_PIN 14
+    #endif
     #ifndef CONFIG_C6_LED_PIN
         #define CONFIG_C6_LED_PIN 8
     #endif
@@ -72,10 +75,10 @@
     #define TFT_DC_PIN      CONFIG_C6_TFT_DC_PIN
     #define TFT_RST_PIN     CONFIG_C6_TFT_RST_PIN
     #define TFT_BL_PIN      CONFIG_C6_TFT_BL_PIN
-    #define TFT_CS_PIN      -1
+    #define TFT_CS_PIN      CONFIG_C6_TFT_CS_PIN
     #define LED_PIN         CONFIG_C6_LED_PIN
     #define LED_PIN_2       CONFIG_C6_LED_PIN_2
-    #define LCD_SPI_HOST    SPI3_HOST
+    #define LCD_SPI_HOST    SPI2_HOST  // ESP32-C6 поддерживает только SPI2
 
     // Определяем TFT_MOSI_PIN для включения дисплея
     #define TFT_MOSI_PIN    SPI_MOSI_PIN
@@ -119,10 +122,10 @@
     #define TFT_DC_PIN      20
     #define TFT_RST_PIN     21
     #define TFT_BL_PIN      22
-    #define TFT_CS_PIN      -1
+    #define TFT_CS_PIN      14
     #define LED_PIN         8
     #define LED_PIN_2       15
-    #define LCD_SPI_HOST    SPI3_HOST
+    #define LCD_SPI_HOST    SPI2_HOST  // ESP32-C6 поддерживает только SPI2
 
     // Определяем TFT_MOSI_PIN для включения дисплея
     #define TFT_MOSI_PIN    SPI_MOSI_PIN
@@ -152,7 +155,7 @@
 // TFT дисплей ST7789V для всех платформ (240x280)
 #define TFT_WIDTH               240
 #define TFT_HEIGHT              280
-#define TFT_SPI_FREQ            20000000  // ИСПРАВЛЕНО: Снижено с 40MHz до 20MHz для стабильности
+#define TFT_SPI_FREQ            12000000  // 12MHz как в рабочем примере
 #define TFT_COLOR_BITS          16
 
 // Настройки BLE
