@@ -223,15 +223,26 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         break;
 
     case BLE_GAP_EVENT_PASSKEY_ACTION:
-        // Just Works pairing - автоматически подтверждаем
+        // Обработка запроса PIN-кода
         ESP_LOGI(TAG, "Passkey action: %d", event->passkey.params.action);
         {
             struct ble_sm_io pkey = {0};
             pkey.action = event->passkey.params.action;
 
-            // Для Just Works просто подтверждаем
-            if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
-                pkey.numcmp_accept = 1;  // Автоматически принимаем
+            // Фиксированный PIN-код (6 цифр, максимум 999999)
+            #define BLE_FIXED_PASSKEY 123456
+
+            if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+                // Display Only - показываем PIN-код
+                pkey.passkey = BLE_FIXED_PASSKEY;
+                ESP_LOGI(TAG, "===========================================");
+                ESP_LOGI(TAG, "  BLE PAIRING PIN CODE: %06lu", (unsigned long)BLE_FIXED_PASSKEY);
+                ESP_LOGI(TAG, "  Введите этот код на телефоне");
+                ESP_LOGI(TAG, "===========================================");
+            } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
+                // Numeric Comparison (для LE Secure Connections с Display+YesNo)
+                pkey.numcmp_accept = 1;
+                ESP_LOGI(TAG, "Numeric comparison: auto-accepting");
             }
 
             int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
@@ -399,10 +410,10 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;  // Callback для логирования регистрации GATT
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
-    // Параметры безопасности - включаем bonding для запоминания устройства
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;  // Без UI (нет дисплея/кнопок) - Just Works
+    // Параметры безопасности - включаем bonding с фиксированным PIN-кодом
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;     // Display Only - показываем PIN (фиксированный)
     ble_hs_cfg.sm_bonding = 1;                          // Включить bonding (сохраняем ключи)
-    ble_hs_cfg.sm_mitm = 0;                             // Отключить MITM (нет UI для подтверждения)
+    ble_hs_cfg.sm_mitm = 1;                             // ВКЛЮЧИТЬ MITM для запроса PIN-кода
     ble_hs_cfg.sm_sc = 1;                               // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
     ble_hs_cfg.sm_keypress = 0;                         // Отключить keypress notifications
 
