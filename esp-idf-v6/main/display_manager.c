@@ -169,6 +169,31 @@ static esp_err_t init_spi_display(void) {
     gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
     ESP_LOGI(TAG, "Backlight enabled on GPIO %d (level=%d)", TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
 
+    // ========== ТЕСТ: Заливка экрана красным цветом для проверки ==========
+    ESP_LOGI(TAG, "Testing display with red fill...");
+
+    // Создаём буфер с красным цветом (RGB565: 0xF800 = красный)
+    size_t test_buffer_size = LCD_H_RES * 10 * 2; // 10 строк * 2 байта на пиксель
+    uint16_t *test_buffer = heap_caps_malloc(test_buffer_size, MALLOC_CAP_DMA);
+
+    if (test_buffer) {
+        // Заполняем красным (RGB565: 0xF800)
+        for (int i = 0; i < LCD_H_RES * 10; i++) {
+            test_buffer[i] = 0xF800; // Красный
+        }
+
+        // Рисуем полосами по 10 строк
+        for (int y = 0; y < LCD_V_RES; y += 10) {
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+        }
+
+        free(test_buffer);
+        ESP_LOGI(TAG, "Display test complete - screen should be RED");
+        ESP_LOGI(TAG, "If screen is still blank, check hardware connections!");
+    } else {
+        ESP_LOGE(TAG, "Failed to allocate test buffer");
+    }
+
     ESP_LOGI(TAG, "===== SPI DISPLAY INITIALIZED SUCCESSFULLY =====");
     return ESP_OK;
 }
