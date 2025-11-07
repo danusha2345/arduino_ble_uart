@@ -143,19 +143,19 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             // RX характеристика (WRITE) - ДОЛЖНА БЫТЬ ПЕРВОЙ по стандарту Nordic UART!
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
-            // Характеристика видна без pairing, но MITM автоматически запросит PIN при записи
+            // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         }, {
             // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            // Характеристика видна без pairing, но MITM автоматически запросит PIN при чтении/notify
+            // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
             .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
-                // CCCD также видимый без pairing
+                // Базовые флаги для CCCD
                 .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
                 .access_cb = gatt_svr_chr_access_tx,
             }, {
@@ -422,11 +422,11 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
     // Параметры безопасности - включаем bonding с фиксированным PIN-кодом
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;     // Display Only - показываем PIN (фиксированный)
-    ble_hs_cfg.sm_bonding = 1;                          // Включить bonding (сохраняем ключи)
-    ble_hs_cfg.sm_mitm = 1;                             // ВКЛЮЧИТЬ MITM для запроса PIN-кода
-    ble_hs_cfg.sm_sc = 1;                               // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
-    ble_hs_cfg.sm_keypress = 0;                         // Отключить keypress notifications
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_KEYBOARD_DISPLAY;  // Keyboard+Display - универсальный режим для PIN
+    ble_hs_cfg.sm_bonding = 1;                           // Включить bonding (сохраняем ключи)
+    ble_hs_cfg.sm_mitm = 1;                              // ВКЛЮЧИТЬ MITM для запроса PIN-кода
+    ble_hs_cfg.sm_sc = 1;                                // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
+    ble_hs_cfg.sm_keypress = 0;                          // Отключить keypress notifications
 
     // КРИТИЧЕСКИ ВАЖНО для bonding: распространяем ВСЕ типы ключей
     // ENC - encryption, ID - identity (IRK), SIGN - signing (CSRK)

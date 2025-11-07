@@ -159,11 +159,17 @@ static esp_err_t init_spi_display(void) {
         .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = 1ULL << TFT_BL_PIN
     };
-    gpio_config(&bk_gpio_config);
-    gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
-    ESP_LOGI(TAG, "Backlight enabled on GPIO %d", TFT_BL_PIN);
+    ESP_LOGI(TAG, "Configuring backlight GPIO %d...", TFT_BL_PIN);
+    ret = gpio_config(&bk_gpio_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure backlight GPIO: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    ESP_LOGI(TAG, "SPI display initialized successfully");
+    gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
+    ESP_LOGI(TAG, "Backlight enabled on GPIO %d (level=%d)", TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
+
+    ESP_LOGI(TAG, "===== SPI DISPLAY INITIALIZED SUCCESSFULLY =====");
     return ESP_OK;
 }
 
@@ -245,10 +251,27 @@ static void create_ui(void) {
         y_pos += line_height;
     }
 
-    // Инициализируем первую строку
-    lv_label_set_text(label_line[0], "GNSS Bridge");
+    // Инициализируем тестовый экран
+    lv_label_set_text(label_line[0], "===================");
+    lv_label_set_text(label_line[1], "  GNSS Bridge");
+    lv_label_set_text(label_line[2], "  ESP32-C6");
+    lv_label_set_text(label_line[3], "===================");
+    lv_label_set_text(label_line[4], "");
+    lv_label_set_text(label_line[5], "Display OK!");
+    lv_label_set_text(label_line[6], "");
+    lv_label_set_text(label_line[7], "Waiting for GPS...");
 
-    ESP_LOGI(TAG, "UI created - 12 lines for 240x280 display");
+    // ТЕСТОВЫЙ ПРЯМОУГОЛЬНИК для проверки отрисовки
+    lv_obj_t *test_rect = lv_obj_create(screen);
+    lv_obj_set_size(test_rect, 100, 50);
+    lv_obj_align(test_rect, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    lv_obj_set_style_bg_color(test_rect, lv_color_make(255, 0, 0), 0);  // Красный
+    lv_obj_set_style_border_width(test_rect, 2, 0);
+    lv_obj_set_style_border_color(test_rect, lv_color_white(), 0);
+    ESP_LOGI(TAG, "Test rectangle added (red, bottom-right)");
+
+    ESP_LOGI(TAG, "===== UI CREATED - 12 LINES + TEST RECT =====");
+    ESP_LOGI(TAG, "Test screen displayed - check if visible on physical display");
 }
 
 // ==================================================
@@ -289,6 +312,7 @@ static void format_local_time(int hour, int minute, int second, int timezone_off
  */
 void display_update_gps_data(void) {
     static char buf[48];
+    static bool first_run = true;
 
     if (!label_line[0]) {
         return;  // UI еще не создан
@@ -298,6 +322,23 @@ void display_update_gps_data(void) {
     uint32_t now = esp_timer_get_time() / 1000;
     bool gps_valid = g_gps_data.valid && (now - g_gps_data.last_update) < GPS_TIMEOUT_MS;
 
+    // ВАЖНО: Пропускаем обновление экрана, пока GPS не валиден
+    // Это позволяет увидеть тестовый экран "Display OK!" для диагностики
+    if (!gps_valid) {
+        if (first_run) {
+            ESP_LOGI(TAG, "Display update skipped - GPS not valid, showing test screen");
+            first_run = false;  // Логируем только один раз
+        }
+        // Обновляем строку 7 со счётчиком спутников (если есть)
+        if (g_gps_data.satellites > 0) {
+            snprintf(buf, sizeof(buf), "Satellites: %d", g_gps_data.satellites);
+            lv_label_set_text(label_line[7], buf);
+        }
+        return;
+    }
+
+    // GPS валиден - сбрасываем флаг и обновляем весь экран
+    first_run = true;
     int line = 0;
 
     if (gps_valid) {
