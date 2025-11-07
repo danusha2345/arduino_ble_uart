@@ -529,15 +529,15 @@ void gps_parser_task(void *pvParameters) {
             check_satellite_timeouts();
             last_timeout_check = now;
 
-            // Логируем GPS статус раз в 5 секунд
-            static uint32_t last_log = 0;
-            if (now - last_log > 5000) {
-                ESP_LOGI(TAG, "GPS: %.6f,%.6f alt=%.1f sat=%d fix=%s acc=%.2f/%.2f/%.2f",
-                         g_gps_data.latitude, g_gps_data.longitude, g_gps_data.altitude,
-                         g_gps_data.satellites, get_fix_type_string(g_gps_data.fix_quality),
-                         g_gps_data.lat_accuracy, g_gps_data.lon_accuracy, g_gps_data.vert_accuracy);
-                last_log = now;
-            }
+            // GPS статус выводится на дисплей, логи не нужны
+            // static uint32_t last_log = 0;
+            // if (now - last_log > 5000) {
+            //     ESP_LOGI(TAG, "GPS: %.6f,%.6f alt=%.1f sat=%d fix=%s acc=%.2f/%.2f/%.2f",
+            //              g_gps_data.latitude, g_gps_data.longitude, g_gps_data.altitude,
+            //              g_gps_data.satellites, get_fix_type_string(g_gps_data.fix_quality),
+            //              g_gps_data.lat_accuracy, g_gps_data.lon_accuracy, g_gps_data.vert_accuracy);
+            //     last_log = now;
+            // }
         }
 
         // Задержка 1 секунда

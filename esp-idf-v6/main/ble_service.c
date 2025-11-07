@@ -57,6 +57,36 @@ static bool notify_enabled = false;
 static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     switch (ctxt->op) {
+    case BLE_GATT_ACCESS_OP_READ_CHR:
+        // Client читает TX характеристику - отдаем данные из буфера (fallback для клиентов без Notify)
+        {
+            uint8_t temp_buf[512];
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
+            size_t to_read = avail > 512 ? 512 : avail;
+
+            if (to_read > 0 && g_ble_tx_buffer) {
+                size_t read = ring_buffer_read(g_ble_tx_buffer, temp_buf, to_read);
+                int rc = os_mbuf_append(ctxt->om, temp_buf, read);
+                ESP_LOGI(TAG, "TX characteristic READ by client: %d bytes (conn_handle=%d)", read, conn_handle);
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            } else {
+                // Нет данных - возвращаем пустое значение
+                static uint8_t empty_val = 0;
+                int rc = os_mbuf_append(ctxt->om, &empty_val, sizeof(empty_val));
+                ESP_LOGI(TAG, "TX characteristic READ by client: empty (conn_handle=%d)", conn_handle);
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+        }
+
+    case BLE_GATT_ACCESS_OP_READ_DSC:
+        // Client читает CCCD дескриптор
+        {
+            uint16_t val = notify_enabled ? 0x0001 : 0x0000;
+            int rc = os_mbuf_append(ctxt->om, &val, sizeof(val));
+            ESP_LOGI(TAG, "CCCD read: returning 0x%04x (notify %s)", val, notify_enabled ? "enabled" : "disabled");
+            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
         // Client подписался на уведомления (CCCD)
         {
@@ -71,6 +101,7 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
         return 0;
 
     default:
+        ESP_LOGW(TAG, "TX characteristic: unhandled operation %d", ctxt->op);
         return BLE_ATT_ERR_UNLIKELY;
     }
 }
@@ -113,14 +144,20 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-            .min_key_size = 7,  // Минимальный размер ключа шифрования (7-16 байт)
         }, {
-            // TX характеристика (NOTIFY) - вторая, только NOTIFY без READ
+            // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            .flags = BLE_GATT_CHR_F_NOTIFY,
-            .min_key_size = 7,  // Минимальный размер ключа шифрования (7-16 байт)
+            .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
+            .descriptors = (struct ble_gatt_dsc_def[]) { {
+                // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
+                .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
+                .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
+                .access_cb = gatt_svr_chr_access_tx,
+            }, {
+                0  // Терминатор массива дескрипторов
+            } },
         }, {
             0,
         } },
@@ -229,31 +266,80 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
  * @brief Запуск advertising
  */
 static void ble_advertise(void) {
-    struct ble_hs_adv_fields fields = {0};
-    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.tx_pwr_lvl_is_present = 1;
-    fields.tx_pwr_lvl = BLE_TX_POWER;
-
-    fields.name = (uint8_t *)BLE_DEVICE_NAME;
-    fields.name_len = strlen(BLE_DEVICE_NAME);
-    fields.name_is_complete = 1;
+    // Advertising packet (до 31 байта): Flags + TX Power + UUID
+    struct ble_hs_adv_fields adv_fields = {0};
+    adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    adv_fields.tx_pwr_lvl_is_present = 1;
+    adv_fields.tx_pwr_lvl = BLE_TX_POWER;
 
     // КРИТИЧЕСКИ ВАЖНО! Включаем Service UUID в advertising
     // чтобы Android приложения могли найти Nordic UART Service
-    fields.uuids128 = &gatt_svr_svc_uuid;
-    fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1;
+    adv_fields.uuids128 = &gatt_svr_svc_uuid;
+    adv_fields.num_uuids128 = 1;
+    adv_fields.uuids128_is_complete = 1;
 
-    ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&adv_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to set advertising fields: %d", rc);
+        return;
+    }
 
+    // Scan response packet (до 31 байта): Имя устройства
+    struct ble_hs_adv_fields rsp_fields = {0};
+    rsp_fields.name = (uint8_t *)BLE_DEVICE_NAME;
+    rsp_fields.name_len = strlen(BLE_DEVICE_NAME);
+    rsp_fields.name_is_complete = 1;
+
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to set scan response fields: %d", rc);
+        return;
+    }
+
+    // Параметры advertising
     struct ble_gap_adv_params adv_params = {0};
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
-                     &adv_params, gap_event_handler, NULL);
+    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+                          &adv_params, gap_event_handler, NULL);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to start advertising: %d", rc);
+        return;
+    }
 
-    ESP_LOGI(TAG, "Advertising started: %s", BLE_DEVICE_NAME);
+    ESP_LOGI(TAG, "Advertising started: %s (UUID in adv, name in scan rsp)", BLE_DEVICE_NAME);
+}
+
+/**
+ * @brief GATT registration callback
+ */
+static void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {
+    char buf[BLE_UUID_STR_LEN];
+
+    switch (ctxt->op) {
+    case BLE_GATT_REGISTER_OP_SVC:
+        ESP_LOGI(TAG, "Registered service %s with handle=%d",
+                 ble_uuid_to_str(ctxt->svc.svc_def->uuid, buf),
+                 ctxt->svc.handle);
+        break;
+
+    case BLE_GATT_REGISTER_OP_CHR:
+        ESP_LOGI(TAG, "Registered characteristic %s with def_handle=%d val_handle=%d",
+                 ble_uuid_to_str(ctxt->chr.chr_def->uuid, buf),
+                 ctxt->chr.def_handle,
+                 ctxt->chr.val_handle);
+        break;
+
+    case BLE_GATT_REGISTER_OP_DSC:
+        ESP_LOGI(TAG, "Registered descriptor %s with handle=%d",
+                 ble_uuid_to_str(ctxt->dsc.dsc_def->uuid, buf),
+                 ctxt->dsc.handle);
+        break;
+
+    default:
+        break;
+    }
 }
 
 /**
@@ -294,8 +380,14 @@ static void ble_host_task(void *param) {
 esp_err_t ble_service_init(void) {
     ESP_LOGI(TAG, "Initializing BLE service...");
 
-    // ШАГ 1: Инициализация NimBLE порта (автоматически инициализирует BT контроллер)
-    esp_err_t ret = nimble_port_init();
+    // ШАГ 0: Освобождаем память от классического Bluetooth (ESP-IDF v6 требование)
+    esp_err_t ret = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to release classic BT memory: %s", esp_err_to_name(ret));
+    }
+
+    // ШАГ 1: Инициализация NimBLE порта (автоматически инициализирует и включает контроллер)
+    ret = nimble_port_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
         return ret;
@@ -304,7 +396,7 @@ esp_err_t ble_service_init(void) {
 
     // ШАГ 2: Настройка параметров безопасности для спаривания
     ble_hs_cfg.sync_cb = on_ble_sync;
-    ble_hs_cfg.gatts_register_cb = NULL;
+    ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;  // Callback для логирования регистрации GATT
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
     // Параметры безопасности - включаем bonding для запоминания устройства
@@ -344,12 +436,12 @@ esp_err_t ble_service_init(void) {
         ESP_LOGW(TAG, "Failed to set device name: %d", ret);
     }
 
-    // ШАГ 4.5: КРИТИЧЕСКИ ВАЖНО! Инициализация хранилища для bonding ключей
+    // ШАГ 5: КРИТИЧЕСКИ ВАЖНО! Инициализация хранилища для bonding ключей
     // Без этого bonding не будет работать - ключи негде сохранять!
     ble_store_config_init();
     ESP_LOGI(TAG, "Bonding storage initialized (NVS)");
 
-    // ШАГ 5: Запуск NimBLE host task
+    // ШАГ 6: Запуск NimBLE host task
     nimble_port_freertos_init(ble_host_task);
 
     ESP_LOGI(TAG, "BLE service initialized successfully");
@@ -370,9 +462,9 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
         uint32_t now = xTaskGetTickCount();
         if (now - last_warn > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
             if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-                ESP_LOGD(TAG, "BLE not connected, skipping %d bytes", len);
+                ESP_LOGW(TAG, "BLE not connected, skipping %d bytes", len);
             } else if (!notify_enabled) {
-                ESP_LOGD(TAG, "BLE notifications not enabled, skipping %d bytes", len);
+                ESP_LOGW(TAG, "BLE notifications not enabled by client, skipping %d bytes", len);
             }
             last_warn = now;
         }
@@ -385,6 +477,7 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
 
     // Отправляем данные порциями по MTU
     size_t offset = 0;
+    size_t total_sent = 0;
     while (offset < len) {
         size_t chunk_size = (len - offset) > max_payload ? max_payload : (len - offset);
 
@@ -395,11 +488,23 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
                 ESP_LOGW(TAG, "Notify failed: %d", rc);
                 break;  // Прерываем при ошибке
             }
+            total_sent += chunk_size;
         } else {
             ESP_LOGE(TAG, "Failed to allocate mbuf");
             break;
         }
 
         offset += chunk_size;
+    }
+
+    // Логируем успешную отправку (но не слишком часто)
+    static uint32_t last_log = 0;
+    static size_t bytes_since_log = 0;
+    bytes_since_log += total_sent;
+    uint32_t now = xTaskGetTickCount();
+    if (now - last_log > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
+        ESP_LOGI(TAG, "BLE TX: sent %d bytes (total %d in last 5s)", total_sent, bytes_since_log);
+        bytes_since_log = 0;
+        last_log = now;
     }
 }
