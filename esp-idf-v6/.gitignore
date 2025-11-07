@@ -4,6 +4,10 @@ sdkconfig
 sdkconfig.old
 *.pyc
 
+# ESP-IDF Component Manager
+dependencies.lock
+managed_components/
+
 # Components (will be added via git submodules or manually)
 components/lvgl/
 components/esp-bsp/
