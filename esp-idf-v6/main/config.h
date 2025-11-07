@@ -152,7 +152,7 @@
 // TFT дисплей ST7789V для всех платформ (240x280)
 #define TFT_WIDTH               240
 #define TFT_HEIGHT              280
-#define TFT_SPI_FREQ            40000000
+#define TFT_SPI_FREQ            20000000  // ИСПРАВЛЕНО: Снижено с 40MHz до 20MHz для стабильности
 #define TFT_COLOR_BITS          16
 
 // Настройки BLE
