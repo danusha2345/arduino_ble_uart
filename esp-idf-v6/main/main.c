@@ -212,6 +212,10 @@ static void broadcast_task(void *pvParameters) {
         return;
     }
 
+    // Диагностика broadcast
+    static uint32_t last_broadcast_log = 0;
+    static size_t broadcast_bytes_total = 0;
+
     while (1) {
         if (g_ble_tx_buffer) {
             size_t avail = ring_buffer_available(g_ble_tx_buffer);
@@ -222,11 +226,22 @@ static void broadcast_task(void *pvParameters) {
                 size_t read = ring_buffer_read(g_ble_tx_buffer, broadcast_buffer, to_read);
 
                 if (read > 0) {
+                    broadcast_bytes_total += read;
+
                     // Отправляем ТУ ЖЕ копию в BLE
                     ble_broadcast_data(broadcast_buffer, read);
 
                     // Отправляем ТУ ЖЕ копию в WiFi (всем клиентам)
                     wifi_broadcast_data(broadcast_buffer, read);
+
+                    // Логируем раз в 5 секунд
+                    uint32_t now = xTaskGetTickCount();
+                    if (now - last_broadcast_log > pdMS_TO_TICKS(5000)) {
+                        ESP_LOGI(TAG, "Broadcast: sent %d bytes (total %d in last 5s)",
+                                 read, broadcast_bytes_total);
+                        broadcast_bytes_total = 0;
+                        last_broadcast_log = now;
+                    }
                 }
             }
         }
@@ -256,14 +271,30 @@ static void uart_task(void *pvParameters) {
     uint8_t *uart_data = malloc(UART_BUF_SIZE);
     uint8_t *rx_data = malloc(RX_BUFFER_SIZE);
 
+    // Диагностика UART
+    static uint32_t last_uart_log = 0;
+    static size_t uart_bytes_total = 0;
+
     while (1) {
         // Читаем данные из GPS
         int len = uart_read_bytes(UART_NUM_1, uart_data, UART_BUF_SIZE,
                                    pdMS_TO_TICKS(20));
         if (len > 0) {
+            uart_bytes_total += len;
+
             // 1. Записываем в TX буфер для СКВОЗНОЙ передачи по BLE/WiFi
             if (g_ble_tx_buffer) {
-                ring_buffer_write(g_ble_tx_buffer, uart_data, len);
+                size_t written = ring_buffer_write(g_ble_tx_buffer, uart_data, len);
+
+                // Логируем UART данные раз в 5 секунд
+                uint32_t now = xTaskGetTickCount();
+                if (now - last_uart_log > pdMS_TO_TICKS(5000)) {
+                    ESP_LOGI(TAG, "UART RX: %d bytes (total %d in last 5s, buffer: %d/%d)",
+                             len, uart_bytes_total,
+                             ring_buffer_available(g_ble_tx_buffer), RING_BUFFER_SIZE);
+                    uart_bytes_total = 0;
+                    last_uart_log = now;
+                }
             }
 
             // 2. Парсим ту же копию для дисплея (не трогаем g_ble_tx_buffer!)

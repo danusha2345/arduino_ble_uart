@@ -73,6 +73,9 @@ static void update_wifi_power(void) {
     }
 }
 
+// Прототипы функций
+static void wifi_connection_task(void *pvParameters);
+
 /**
  * @brief WiFi event handler
  */
