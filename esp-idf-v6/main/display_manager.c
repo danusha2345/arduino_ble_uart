@@ -251,7 +251,7 @@ static void create_ui(void) {
     // Создаем 9 строк текста с цветовым кодированием
     // Высота экрана 280px / 9 строк = ~31px на строку
     int y_pos = 5;  // Отступ сверху
-    int line_height = 15;  // Межстрочный интервал 31px
+    int line_height = 30;  // Межстрочный интервал 31px
     int x_offset = 15;  // Отступ слева 15 пикселей
 
     // Цвета для каждой строки
@@ -272,7 +272,7 @@ static void create_ui(void) {
         lv_label_set_text(label_line[i], "");
         lv_obj_set_style_text_color(label_line[i], line_colors[i], 0);
         // Используем шрифт Montserrat 14 (стандартный, гарантированно работает)
-        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_20, 0);
         lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, x_offset, y_pos);
         y_pos += line_height;
     }
