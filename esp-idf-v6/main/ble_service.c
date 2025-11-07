@@ -422,10 +422,10 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;  // Callback для управления bonding storage
 
     // Параметры безопасности - включаем bonding с фиксированным PIN-кодом
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_KEYBOARD_DISPLAY;  // Keyboard+Display - универсальный режим для PIN
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;      // Display Only - показываем фиксированный PIN
     ble_hs_cfg.sm_bonding = 1;                           // Включить bonding (сохраняем ключи)
     ble_hs_cfg.sm_mitm = 1;                              // ВКЛЮЧИТЬ MITM для запроса PIN-кода
-    ble_hs_cfg.sm_sc = 1;                                // ВКЛЮЧИТЬ Secure Connections для совместимости с Android
+    ble_hs_cfg.sm_sc = 0;                                // ОТКЛЮЧИТЬ Secure Connections (иначе будет Numeric Comparison)
     ble_hs_cfg.sm_keypress = 0;                          // Отключить keypress notifications
 
     // КРИТИЧЕСКИ ВАЖНО для bonding: распространяем ВСЕ типы ключей
