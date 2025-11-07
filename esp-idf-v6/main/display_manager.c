@@ -271,7 +271,8 @@ static void create_ui(void) {
         label_line[i] = lv_label_create(screen);
         lv_label_set_text(label_line[i], "");
         lv_obj_set_style_text_color(label_line[i], line_colors[i], 0);
-        // Используем стандартный шрифт 14
+        // Используем шрифт Montserrat 20
+        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_20, 0);
         lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, x_offset, y_pos);
         y_pos += line_height;
     }
