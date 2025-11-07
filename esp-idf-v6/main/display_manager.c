@@ -116,9 +116,11 @@ static esp_err_t init_spi_display(void) {
     // ========== ШАГ 3: Настройка панели ST7789 ==========
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = TFT_RST_PIN,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        // Попробуем BGR порядок (частая проблема с дисплеями)
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
     };
+    ESP_LOGI(TAG, "Panel config: RGB order=BGR, bits_per_pixel=16");
 
     ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
     if (ret != ESP_OK) {
@@ -142,11 +144,13 @@ static esp_err_t init_spi_display(void) {
     ESP_LOGI(TAG, "Panel initialized");
 
     // ========== ШАГ 5: Настройка ориентации ==========
-    // Инвертируем цвета для правильного отображения
-    esp_lcd_panel_invert_color(panel_handle, true);
 
-    // Устанавливаем ориентацию для 240x280 (вертикальная, высота больше ширины)
-    // Для ST7789V с разрешением 240x280 используем стандартную ориентацию
+    // ДИАГНОСТИКА: Попробуем разные варианты конфигурации
+    ESP_LOGI(TAG, "Testing different display configurations...");
+
+    // Вариант 1: БЕЗ инверсии цветов
+    ESP_LOGI(TAG, "Config 1: invert=false, swap=false, mirror=false,false");
+    esp_lcd_panel_invert_color(panel_handle, false);
     esp_lcd_panel_swap_xy(panel_handle, false);
     esp_lcd_panel_mirror(panel_handle, false, false);
 
@@ -169,27 +173,60 @@ static esp_err_t init_spi_display(void) {
     gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
     ESP_LOGI(TAG, "Backlight enabled on GPIO %d (level=%d)", TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
 
-    // ========== ТЕСТ: Заливка экрана красным цветом для проверки ==========
-    ESP_LOGI(TAG, "Testing display with red fill...");
+    // ========== ТЕСТ: Заливка экрана разными цветами для проверки ==========
+    ESP_LOGI(TAG, "Testing display with color fills...");
 
-    // Создаём буфер с красным цветом (RGB565: 0xF800 = красный)
     size_t test_buffer_size = LCD_H_RES * 10 * 2; // 10 строк * 2 байта на пиксель
     uint16_t *test_buffer = heap_caps_malloc(test_buffer_size, MALLOC_CAP_DMA);
 
     if (test_buffer) {
-        // Заполняем красным (RGB565: 0xF800)
+        // Тест 1: БЕЛЫЙ экран (0xFFFF)
+        ESP_LOGI(TAG, "Test 1: WHITE fill (0xFFFF)");
+        for (int i = 0; i < LCD_H_RES * 10; i++) {
+            test_buffer[i] = 0xFFFF; // Белый
+        }
+        for (int y = 0; y < LCD_V_RES; y += 10) {
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Пауза 1 сек
+
+        // Тест 2: КРАСНЫЙ экран (0xF800)
+        ESP_LOGI(TAG, "Test 2: RED fill (0xF800)");
         for (int i = 0; i < LCD_H_RES * 10; i++) {
             test_buffer[i] = 0xF800; // Красный
         }
+        for (int y = 0; y < LCD_V_RES; y += 10) {
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
 
-        // Рисуем полосами по 10 строк
+        // Тест 3: ЗЕЛЁНЫЙ экран (0x07E0)
+        ESP_LOGI(TAG, "Test 3: GREEN fill (0x07E0)");
+        for (int i = 0; i < LCD_H_RES * 10; i++) {
+            test_buffer[i] = 0x07E0; // Зелёный
+        }
+        for (int y = 0; y < LCD_V_RES; y += 10) {
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        // Тест 4: СИНИЙ экран (0x001F)
+        ESP_LOGI(TAG, "Test 4: BLUE fill (0x001F)");
+        for (int i = 0; i < LCD_H_RES * 10; i++) {
+            test_buffer[i] = 0x001F; // Синий
+        }
         for (int y = 0; y < LCD_V_RES; y += 10) {
             esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
         }
 
         free(test_buffer);
-        ESP_LOGI(TAG, "Display test complete - screen should be RED");
-        ESP_LOGI(TAG, "If screen is still blank, check hardware connections!");
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "Display test complete!");
+        ESP_LOGI(TAG, "If screen is STILL BLANK after WHITE/RED/GREEN/BLUE:");
+        ESP_LOGI(TAG, "  1) Check wiring (MOSI=18, SCLK=19, DC=20, RST=21, BL=22)");
+        ESP_LOGI(TAG, "  2) Check display type (is it really ST7789V?)");
+        ESP_LOGI(TAG, "  3) Check resolution (is it really 240x280?)");
+        ESP_LOGI(TAG, "========================================");
     } else {
         ESP_LOGE(TAG, "Failed to allocate test buffer");
     }
