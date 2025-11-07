@@ -220,59 +220,74 @@ static esp_err_t init_spi_display(void) {
     gpio_set_level(TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
     ESP_LOGI(TAG, "Backlight enabled on GPIO %d (level=%d)", TFT_BL_PIN, LCD_BK_LIGHT_ON_LEVEL);
 
-    // ========== ТЕСТ: Заливка экрана разными цветами для проверки ==========
-    ESP_LOGI(TAG, "Testing display with color fills...");
+    // ========== АВТОМАТИЧЕСКИЙ ТЕСТ РАЗНЫХ КОНФИГУРАЦИЙ ==========
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "AUTOMATIC CONFIGURATION TEST");
+    ESP_LOGI(TAG, "Testing different GAP/invert/orientation combinations");
+    ESP_LOGI(TAG, "Watch the screen for WHITE fills (2 sec each)");
+    ESP_LOGI(TAG, "========================================");
 
     size_t test_buffer_size = LCD_H_RES * 10 * 2; // 10 строк * 2 байта на пиксель
     uint16_t *test_buffer = heap_caps_malloc(test_buffer_size, MALLOC_CAP_DMA);
 
     if (test_buffer) {
-        // Тест 1: БЕЛЫЙ экран (0xFFFF)
-        ESP_LOGI(TAG, "Test 1: WHITE fill (0xFFFF)");
+        // Заполняем буфер БЕЛЫМ цветом для теста
         for (int i = 0; i < LCD_H_RES * 10; i++) {
             test_buffer[i] = 0xFFFF; // Белый
         }
-        for (int y = 0; y < LCD_V_RES; y += 10) {
-            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Пауза 1 сек
 
-        // Тест 2: КРАСНЫЙ экран (0xF800)
-        ESP_LOGI(TAG, "Test 2: RED fill (0xF800)");
-        for (int i = 0; i < LCD_H_RES * 10; i++) {
-            test_buffer[i] = 0xF800; // Красный
-        }
-        for (int y = 0; y < LCD_V_RES; y += 10) {
-            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Тестируем разные GAP значения
+        int gap_variants[][2] = {
+            {0, 0},    // Вариант 1: Нет offset
+            {0, 20},   // Вариант 2: Стандартный ST7789V 240x280
+            {0, 35},   // Вариант 3: Альтернатива
+            {0, 80},   // Вариант 4: Для 240x240
+        };
 
-        // Тест 3: ЗЕЛЁНЫЙ экран (0x07E0)
-        ESP_LOGI(TAG, "Test 3: GREEN fill (0x07E0)");
-        for (int i = 0; i < LCD_H_RES * 10; i++) {
-            test_buffer[i] = 0x07E0; // Зелёный
-        }
-        for (int y = 0; y < LCD_V_RES; y += 10) {
-            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        for (int gap_idx = 0; gap_idx < 4; gap_idx++) {
+            int x_gap = gap_variants[gap_idx][0];
+            int y_gap = gap_variants[gap_idx][1];
 
-        // Тест 4: СИНИЙ экран (0x001F)
-        ESP_LOGI(TAG, "Test 4: BLUE fill (0x001F)");
-        for (int i = 0; i < LCD_H_RES * 10; i++) {
-            test_buffer[i] = 0x001F; // Синий
-        }
-        for (int y = 0; y < LCD_V_RES; y += 10) {
-            esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+            ESP_LOGI(TAG, "----------------------------------------");
+            ESP_LOGI(TAG, "Test %d: GAP x=%d, y=%d", gap_idx + 1, x_gap, y_gap);
+
+            // Устанавливаем GAP
+            esp_lcd_panel_set_gap(panel_handle, x_gap, y_gap);
+
+            // Тестируем с инверсией = false
+            ESP_LOGI(TAG, "  - Trying: invert=false, swap=false, mirror=false,false");
+            esp_lcd_panel_invert_color(panel_handle, false);
+            esp_lcd_panel_swap_xy(panel_handle, false);
+            esp_lcd_panel_mirror(panel_handle, false, false);
+
+            // Рисуем БЕЛЫЙ экран
+            for (int y = 0; y < LCD_V_RES; y += 10) {
+                esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+            }
+            vTaskDelay(pdMS_TO_TICKS(2000)); // 2 секунды
+
+            // Тестируем с инверсией = true
+            ESP_LOGI(TAG, "  - Trying: invert=true, swap=false, mirror=false,false");
+            esp_lcd_panel_invert_color(panel_handle, true);
+
+            // Рисуем БЕЛЫЙ экран
+            for (int y = 0; y < LCD_V_RES; y += 10) {
+                esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y + 10, test_buffer);
+            }
+            vTaskDelay(pdMS_TO_TICKS(2000)); // 2 секунды
         }
 
         free(test_buffer);
+
         ESP_LOGI(TAG, "========================================");
-        ESP_LOGI(TAG, "Display test complete!");
-        ESP_LOGI(TAG, "If screen is STILL BLANK after WHITE/RED/GREEN/BLUE:");
-        ESP_LOGI(TAG, "  1) Check wiring (MOSI=18, SCLK=19, DC=20, RST=21, BL=22)");
-        ESP_LOGI(TAG, "  2) Check display type (is it really ST7789V?)");
-        ESP_LOGI(TAG, "  3) Check resolution (is it really 240x280?)");
+        ESP_LOGI(TAG, "AUTO TEST COMPLETE!");
+        ESP_LOGI(TAG, "If you saw WHITE screen flash:");
+        ESP_LOGI(TAG, "  - Check logs above to find which GAP/invert worked");
+        ESP_LOGI(TAG, "  - Update code with correct values");
+        ESP_LOGI(TAG, "If screen was BLANK throughout all tests:");
+        ESP_LOGI(TAG, "  - Check wiring (MOSI=18, SCLK=19, DC=20, RST=21, BL=22)");
+        ESP_LOGI(TAG, "  - Verify display controller (is it ST7789V?)");
+        ESP_LOGI(TAG, "  - Confirm resolution (240x280?)");
         ESP_LOGI(TAG, "========================================");
     } else {
         ESP_LOGE(TAG, "Failed to allocate test buffer");
