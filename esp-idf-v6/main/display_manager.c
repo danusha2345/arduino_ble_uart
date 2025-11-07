@@ -254,17 +254,17 @@ static void create_ui(void) {
     int line_height = 31;  // Межстрочный интервал 31px
     int x_offset = 15;  // Отступ слева 15 пикселей
 
-    // Цвета для каждой строки
+    // ТЕСТ: ВСЕ СТРОКИ КРАСНЫМ для проверки что изменения работают
     lv_color_t line_colors[9] = {
-        lv_color_white(),                           // 0: Заголовок
-        lv_palette_main(LV_PALETTE_YELLOW),        // 1: Спутники/Fix
-        lv_palette_main(LV_PALETTE_GREEN),         // 2: Широта
-        lv_palette_main(LV_PALETTE_GREEN),         // 3: Долгота
-        lv_palette_main(LV_PALETTE_LIGHT_BLUE),    // 4: Высота
-        lv_color_white(),                           // 5: Время
-        lv_palette_main(LV_PALETTE_ORANGE),        // 6: Точность N/S
-        lv_palette_main(LV_PALETTE_ORANGE),        // 7: Точность E/W
-        lv_palette_main(LV_PALETTE_ORANGE)         // 8: Точность Vert
+        lv_palette_main(LV_PALETTE_RED),           // 0: Заголовок
+        lv_palette_main(LV_PALETTE_RED),           // 1: Спутники/Fix
+        lv_palette_main(LV_PALETTE_RED),           // 2: Широта
+        lv_palette_main(LV_PALETTE_RED),           // 3: Долгота
+        lv_palette_main(LV_PALETTE_RED),           // 4: Высота
+        lv_palette_main(LV_PALETTE_RED),           // 5: Время
+        lv_palette_main(LV_PALETTE_RED),           // 6: Точность N/S
+        lv_palette_main(LV_PALETTE_RED),           // 7: Точность E/W
+        lv_palette_main(LV_PALETTE_RED)            // 8: Точность Vert
     };
 
     for (int i = 0; i < num_lines; i++) {
