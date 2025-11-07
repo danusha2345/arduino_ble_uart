@@ -143,16 +143,19 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             // RX характеристика (WRITE) - ДОЛЖНА БЫТЬ ПЕРВОЙ по стандарту Nordic UART!
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
+            // Характеристика видна без pairing, но MITM автоматически запросит PIN при записи
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         }, {
             // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
+            // Характеристика видна без pairing, но MITM автоматически запросит PIN при чтении/notify
             .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
+                // CCCD также видимый без pairing
                 .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
                 .access_cb = gatt_svr_chr_access_tx,
             }, {
@@ -194,9 +197,17 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
                 ESP_LOGW(TAG, "Failed to update connection params: %d", rc);
             }
 
-            // НЕ инициируем security - пусть Android (central) сам запросит pairing
-            // Peripheral не должен инициировать bonding в Just Works режиме
-            ESP_LOGI(TAG, "Connection established, waiting for central to initiate pairing");
+            // ВАЖНО: Инициируем pairing сразу при подключении (для Display Only режима)
+            // Это заставит телефон запросить PIN-код ДО GATT discovery
+            ESP_LOGI(TAG, "Connection established, initiating security/pairing...");
+            rc = ble_gap_security_initiate(conn_handle);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Failed to initiate security: %d (error: %s)", rc,
+                         rc == BLE_HS_ENOTCONN ? "not connected" :
+                         rc == BLE_HS_EALREADY ? "already paired/pairing" : "other");
+            } else {
+                ESP_LOGI(TAG, "Security initiation started - waiting for PIN request");
+            }
         }
         break;
 
