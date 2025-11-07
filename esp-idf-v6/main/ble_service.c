@@ -143,20 +143,20 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             // RX характеристика (WRITE) - ДОЛЖНА БЫТЬ ПЕРВОЙ по стандарту Nordic UART!
             .uuid = &gatt_svr_chr_rx_uuid.u,
             .access_cb = gatt_svr_chr_access_rx,
-            // Характеристика видна без pairing, но MITM автоматически запросит PIN при записи
-            .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            // С MITM=1 требуется AUTHEN флаг для видимости характеристики
+            .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_AUTHEN,
         }, {
             // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            // Характеристика видна без pairing, но MITM автоматически запросит PIN при чтении/notify
-            .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
+            // С MITM=1 требуется AUTHEN флаг для видимости характеристики
+            .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
-                // CCCD также видимый без pairing
-                .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
+                // С MITM=1 требуется AUTHEN флаг для CCCD
+                .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE | BLE_ATT_F_READ_AUTHEN | BLE_ATT_F_WRITE_AUTHEN,
                 .access_cb = gatt_svr_chr_access_tx,
             }, {
                 0  // Терминатор массива дескрипторов
