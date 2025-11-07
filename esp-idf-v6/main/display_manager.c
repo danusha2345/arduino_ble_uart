@@ -12,11 +12,14 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
-#include "esp_lcd_panel_st7789.h"
+#include "esp_lcd_panel_st7789.h"  // Попробуем оба варианта
 #include "lvgl.h"
 
 #include "config.h"
 #include "common.h"
+
+// Forward declaration для ST7789V3 если доступен
+extern esp_err_t esp_lcd_new_panel_st7789v3(const esp_lcd_panel_io_handle_t io, const esp_lcd_panel_dev_config_t *panel_dev_config, esp_lcd_panel_handle_t *ret_panel) __attribute__((weak));
 
 static const char *TAG = "Display";
 
@@ -151,13 +154,24 @@ static esp_err_t init_spi_display(void) {
     };
     ESP_LOGI(TAG, "Panel config: RGB order=BGR, bits_per_pixel=16");
 
-    // ИСПРАВЛЕНО: Используем esp_lcd_new_panel_st7789 (не st7789t, т.к. у нас 240x280 а не 172x320)
-    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+    // КРИТИЧНО: Пробуем найти правильный драйвер для ST7789V3
+    ESP_LOGI(TAG, "Creating panel for ST7789V3...");
+
+    // Пробуем в таком порядке: V3 -> T -> обычный
+    if (esp_lcd_new_panel_st7789v3 != NULL) {
+        ret = esp_lcd_new_panel_st7789v3(io_handle, &panel_config, &panel_handle);
+        ESP_LOGI(TAG, "Using ST7789V3 driver");
+    } else {
+        // Используем обычный ST7789
+        ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+        ESP_LOGI(TAG, "Using standard ST7789 driver");
+    }
+
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create ST7789 panel: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create panel: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "ST7789 panel created");
+    ESP_LOGI(TAG, "Panel created successfully");
 
     // ========== ШАГ 4: Инициализация панели ==========
     ret = esp_lcd_panel_reset(panel_handle);
@@ -175,31 +189,10 @@ static esp_err_t init_spi_display(void) {
     }
     ESP_LOGI(TAG, "Panel initialized");
 
-    // ВАЖНО: Установка GAP (offset) для ST7789V 240x280
-    // Многие дисплеи ST7789V требуют смещения координат
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "CRITICAL: Setting display GAP (offset)");
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "Common ST7789V 240x280 GAP values:");
-    ESP_LOGI(TAG, "  - (0, 0)  = No offset (rare)");
-    ESP_LOGI(TAG, "  - (0, 20) = Standard ST7789V 240x280");
-    ESP_LOGI(TAG, "  - (0, 35) = Some manufacturers");
-    ESP_LOGI(TAG, "  - (0, 80) = If display is actually 240x240");
-    ESP_LOGI(TAG, "========================================");
-
-    // ТЕСТ: Попробуем GAP (0, 0) сначала
-    ESP_LOGI(TAG, "Trying GAP: x=0, y=0 (no offset)");
-    esp_lcd_panel_set_gap(panel_handle, 0, 0);
-
-    // ========== ШАГ 5: Настройка ориентации ==========
-    // ИСПРАВЛЕНО: Конфигурация как в рабочем примере trianglesis
-    ESP_LOGI(TAG, "Setting display orientation (like trianglesis example)...");
-
-    esp_lcd_panel_invert_color(panel_handle, false);
-    esp_lcd_panel_swap_xy(panel_handle, false);
-    // ВАЖНО: Mirror X = true (как в примере trianglesis)
+    // ========== ШАГ 5: Настройка - ТОЛЬКО mirror как в рабочем примере ==========
+    // ВАЖНО: НЕ используем set_gap, invert_color, swap_xy - их нет в рабочем коде!
+    ESP_LOGI(TAG, "Setting mirror(true, false) - ONLY this, nothing else!");
     esp_lcd_panel_mirror(panel_handle, true, false);
-    ESP_LOGI(TAG, "Config: invert=false, swap=false, mirror=true,false");
 
     // Включаем дисплей
     esp_lcd_panel_disp_on_off(panel_handle, true);
