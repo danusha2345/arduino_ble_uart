@@ -251,28 +251,28 @@ static void create_ui(void) {
     // Создаем 9 строк текста с цветовым кодированием
     // Высота экрана 280px / 9 строк = ~31px на строку
     int y_pos = 5;  // Отступ сверху
-    int line_height = 31;  // Межстрочный интервал 31px
+    int line_height = 15;  // Межстрочный интервал 31px
     int x_offset = 15;  // Отступ слева 15 пикселей
 
     // ТЕСТ: ВСЕ СТРОКИ КРАСНЫМ для проверки что изменения работают
     lv_color_t line_colors[9] = {
-        lv_palette_main(LV_PALETTE_RED),           // 0: Заголовок
-        lv_palette_main(LV_PALETTE_RED),           // 1: Спутники/Fix
-        lv_palette_main(LV_PALETTE_RED),           // 2: Широта
-        lv_palette_main(LV_PALETTE_RED),           // 3: Долгота
-        lv_palette_main(LV_PALETTE_RED),           // 4: Высота
-        lv_palette_main(LV_PALETTE_RED),           // 5: Время
-        lv_palette_main(LV_PALETTE_RED),           // 6: Точность N/S
-        lv_palette_main(LV_PALETTE_RED),           // 7: Точность E/W
-        lv_palette_main(LV_PALETTE_RED)            // 8: Точность Vert
+                lv_color_white(),                           // 0: Заголовок
+                lv_palette_main(LV_PALETTE_YELLOW),        // 1: Спутники/Fix
+                lv_color_white(),         // 2: Широта
+                lv_color_white(),         // 3: Долгота
+                lv_palette_main(LV_PALETTE_LIGHT_BLUE),    // 4: Высота
+                lv_color_white(),                           // 5: Время
+                lv_palette_main(LV_PALETTE_ORANGE),        // 6: Точность N/S
+                lv_palette_main(LV_PALETTE_ORANGE),        // 7: Точность E/W
+                lv_palette_main(LV_PALETTE_ORANGE)         // 8: Точность Vert
     };
 
     for (int i = 0; i < num_lines; i++) {
         label_line[i] = lv_label_create(screen);
         lv_label_set_text(label_line[i], "");
         lv_obj_set_style_text_color(label_line[i], line_colors[i], 0);
-        // Используем шрифт Montserrat 20 (LVGL v9 синтаксис)
-        lv_obj_set_style_text_font(label_line[i], LV_FONT_MONTSERRAT_20, 0);
+        // строка выбора шрифта вызывает зависание
+     //   lv_obj_set_style_text_font(label_line[i], LV_FONT_MONTSERRAT_20, 0);
         lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, x_offset, y_pos);
         y_pos += line_height;
     }
