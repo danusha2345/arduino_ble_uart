@@ -363,7 +363,7 @@ static void ble_advertise(void) {
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+    rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER,
                           &adv_params, gap_event_handler, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to start advertising: %d", rc);
@@ -410,8 +410,25 @@ static void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
 static void on_ble_sync(void) {
     ESP_LOGI(TAG, "BLE host synced");
 
+    // ========================================
+    // ТЕСТОВЫЙ КОД: Установка кастомного MAC адреса
+    // Цель: проверить кэширование BLE на телефоне
+    // ========================================
+    uint8_t custom_mac[6] = {0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};  // CC:DD:EE:FF:00:11
+    int rc = ble_hs_id_set_rnd(custom_mac);
+    if (rc == 0) {
+        uint8_t addr[6];
+        rc = ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr, NULL);
+        if (rc == 0) {
+            ESP_LOGI(TAG, "✅ Custom MAC address set: %02X:%02X:%02X:%02X:%02X:%02X",
+                     addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to set custom MAC address: %d", rc);
+    }
+
     // Установка предпочтительного PHY на 2M для увеличения скорости
-    int rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK);
+    rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK);
     if (rc == 0) {
         ESP_LOGI(TAG, "2M PHY enabled for maximum throughput");
     } else {
