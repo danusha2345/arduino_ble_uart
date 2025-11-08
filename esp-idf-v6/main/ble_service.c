@@ -345,6 +345,15 @@ static void ble_advertise(void) {
     adv_fields.num_uuids128 = 1;
     adv_fields.uuids128_is_complete = 1;
 
+    // ВАЖНО! Добавляем Slave Connection Interval Range (как в Arduino версии)
+    // Это Type 0x12 в advertising packet
+    // Формат: 4 байта little-endian (min_interval, max_interval)
+    static const uint8_t slave_itvl_range[] = {
+        0x06, 0x00,  // Min interval: 6 * 1.25ms = 7.5ms
+        0x0C, 0x00   // Max interval: 12 * 1.25ms = 15ms
+    };
+    adv_fields.slave_itvl_range = slave_itvl_range;
+
     // ========================================
     // ДИАГНОСТИКА: Логируем что ИМЕННО будет передано в advertising
     // ========================================
@@ -587,18 +596,14 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
         last_status_log = now_status;
     }
 
-    // Проверяем подключение и уведомления
-    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || !notify_enabled) {
+    // Проверяем подключение (как в Arduino версии - НЕ проверяем notify_enabled!)
+    // Arduino NimBLE автоматически отправляет notify() независимо от подписки клиента
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         // Диагностика (но не слишком часто)
         static uint32_t last_warn = 0;
         uint32_t now = xTaskGetTickCount();
         if (now - last_warn > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
-            if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-                ESP_LOGW(TAG, "❌ BLE NOT CONNECTED - data blocked (%d bytes dropped)", len);
-            } else if (!notify_enabled) {
-                ESP_LOGW(TAG, "❌ BLE NOTIFICATIONS NOT ENABLED - data blocked (%d bytes dropped)", len);
-                ESP_LOGW(TAG, "Client must subscribe to TX characteristic to receive data!");
-            }
+            ESP_LOGW(TAG, "❌ BLE NOT CONNECTED - data blocked (%d bytes dropped)", len);
             last_warn = now;
         }
         return;
