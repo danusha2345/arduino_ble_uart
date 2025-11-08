@@ -58,22 +58,29 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     switch (ctxt->op) {
     case BLE_GATT_ACCESS_OP_READ_CHR:
-        // Client читает TX характеристику - отдаем данные из буфера (fallback для клиентов без Notify)
+        // Client читает TX характеристику - возвращаем данные из буфера
+        // Используем статический буфер для избежания stack overflow
         {
-            uint8_t temp_buf[512];
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-            size_t to_read = avail > 512 ? 512 : avail;
+            static uint8_t temp_buf[256]; // Статический буфер - безопасно для callback
 
-            if (to_read > 0 && g_ble_tx_buffer) {
+            if (!g_ble_tx_buffer) {
+                // Буфер не инициализирован - возвращаем пустоту
+                static const uint8_t empty = 0;
+                int rc = os_mbuf_append(ctxt->om, &empty, 1);
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+
+            size_t avail = ring_buffer_available(g_ble_tx_buffer);
+            size_t to_read = avail > 256 ? 256 : avail;
+
+            if (to_read > 0) {
                 size_t read = ring_buffer_read(g_ble_tx_buffer, temp_buf, to_read);
                 int rc = os_mbuf_append(ctxt->om, temp_buf, read);
-                ESP_LOGI(TAG, "TX characteristic READ by client: %d bytes (conn_handle=%d)", read, conn_handle);
                 return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
             } else {
-                // Нет данных - возвращаем пустое значение
-                static uint8_t empty_val = 0;
-                int rc = os_mbuf_append(ctxt->om, &empty_val, sizeof(empty_val));
-                ESP_LOGI(TAG, "TX characteristic READ by client: empty (conn_handle=%d)", conn_handle);
+                // Нет данных
+                static const uint8_t empty = 0;
+                int rc = os_mbuf_append(ctxt->om, &empty, 1);
                 return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
             }
         }
@@ -92,11 +99,23 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
         {
             uint16_t val = 0;
             os_mbuf_copydata(ctxt->om, 0, sizeof(val), &val);
-            ESP_LOGI(TAG, "CCCD write: value=0x%04x (bytes read=%d)", val, sizeof(val));
 
             // CCCD: 0x0001 = notifications, 0x0002 = indications, 0x0000 = disabled
+            bool prev_state = notify_enabled;
             notify_enabled = (val == 0x0001);
-            ESP_LOGI(TAG, "TX Notify %s (CCCD=0x%04x)", notify_enabled ? "ENABLED" : "DISABLED", val);
+
+            ESP_LOGI(TAG, "===========================================");
+            ESP_LOGI(TAG, "CCCD WRITE: value=0x%04x", val);
+            ESP_LOGI(TAG, "TX Notifications: %s → %s",
+                     prev_state ? "ENABLED" : "DISABLED",
+                     notify_enabled ? "ENABLED" : "DISABLED");
+
+            if (notify_enabled) {
+                ESP_LOGI(TAG, "✅ BLE TX now active - data will flow!");
+            } else {
+                ESP_LOGW(TAG, "❌ BLE TX disabled - data blocked!");
+            }
+            ESP_LOGI(TAG, "===========================================");
         }
         return 0;
 
@@ -146,11 +165,11 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         }, {
-            // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
+            // TX характеристика (NOTIFY + READ)
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
+            // NOTIFY для передачи данных, READ для совместимости с клиентами
             .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
@@ -174,12 +193,16 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
 static int gap_event_handler(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-        ESP_LOGI(TAG, "Connection %s; status=%d",
-                 event->connect.status == 0 ? "established" : "failed",
-                 event->connect.status);
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "BLE CONNECTION EVENT: status=%d (%s)",
+                 event->connect.status,
+                 event->connect.status == 0 ? "SUCCESS" : "FAILED");
 
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
+            ESP_LOGI(TAG, "✅ BLE Client connected! conn_handle=%d", conn_handle);
+            ESP_LOGI(TAG, "Waiting for client to enable notifications...");
+            ESP_LOGI(TAG, "===========================================");
             int rc;
 
             // Запрашиваем обновление параметров соединения для максимальной скорости
@@ -212,9 +235,13 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "Disconnect; reason=%d", event->disconnect.reason);
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "❌ BLE Client DISCONNECTED (reason=%d)", event->disconnect.reason);
+        ESP_LOGI(TAG, "Resetting connection state...");
         conn_handle = BLE_HS_CONN_HANDLE_NONE;
         notify_enabled = false;
+        ESP_LOGI(TAG, "Restarting advertising...");
+        ESP_LOGI(TAG, "===========================================");
 
         // Перезапускаем advertising
         ble_advertise();
@@ -477,6 +504,17 @@ esp_err_t ble_service_init(void) {
 void ble_broadcast_data(const uint8_t *data, size_t len) {
     if (!data || len == 0) return;
 
+    // ДИАГНОСТИКА: Периодическое логирование состояния BLE
+    static uint32_t last_status_log = 0;
+    uint32_t now_status = xTaskGetTickCount();
+    if (now_status - last_status_log > pdMS_TO_TICKS(10000)) {  // Раз в 10 секунд
+        ESP_LOGI(TAG, "BLE STATUS: connected=%s, notify_enabled=%s, conn_handle=%d",
+                 conn_handle != BLE_HS_CONN_HANDLE_NONE ? "YES" : "NO",
+                 notify_enabled ? "YES" : "NO",
+                 conn_handle);
+        last_status_log = now_status;
+    }
+
     // Проверяем подключение и уведомления
     if (conn_handle == BLE_HS_CONN_HANDLE_NONE || !notify_enabled) {
         // Диагностика (но не слишком часто)
@@ -484,9 +522,10 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
         uint32_t now = xTaskGetTickCount();
         if (now - last_warn > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
             if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-                ESP_LOGW(TAG, "BLE not connected, skipping %d bytes", len);
+                ESP_LOGW(TAG, "❌ BLE NOT CONNECTED - data blocked (%d bytes dropped)", len);
             } else if (!notify_enabled) {
-                ESP_LOGW(TAG, "BLE notifications not enabled by client, skipping %d bytes", len);
+                ESP_LOGW(TAG, "❌ BLE NOTIFICATIONS NOT ENABLED - data blocked (%d bytes dropped)", len);
+                ESP_LOGW(TAG, "Client must subscribe to TX characteristic to receive data!");
             }
             last_warn = now;
         }
