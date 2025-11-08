@@ -49,6 +49,7 @@ static const ble_uuid128_t gatt_svr_chr_rx_uuid =
 // Глобальные переменные
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t tx_char_val_handle;
+static uint16_t rx_char_val_handle;
 static bool notify_enabled = false;
 
 /**
@@ -164,6 +165,7 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             .access_cb = gatt_svr_chr_access_rx,
             // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            .val_handle = &rx_char_val_handle
         }, {
             // TX характеристика (NOTIFY + READ)
             .uuid = &gatt_svr_chr_tx_uuid.u,
@@ -466,7 +468,7 @@ esp_err_t ble_service_init(void) {
     // ШАГ 3: Регистрация GAP и GATT сервисов
     ble_svc_gap_init();
     ble_svc_gatt_init();
-
+    // ble_hs_cfg.reset_cb = on_reset;  
     ret = ble_gatts_count_cfg(gatt_svr_svcs);
     if (ret != 0) {
         ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", ret);
