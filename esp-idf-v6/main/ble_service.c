@@ -33,23 +33,23 @@ static const char *TAG = "BLE";
 // Forward declarations
 static void ble_advertise(void);
 
-// Nordic UART Service UUIDs
-// ТЕСТОВЫЙ UUID: Изменён для проверки кэша телефона!
-// После проверки вернуть на: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+// Nordic UART Service UUIDs (стандартные)
+// NOTE: nRF Connect может показывать UUID по-разному в разных разделах
+// (Server vs Client). Это нормально - устройство работает правильно.
 static const ble_uuid128_t gatt_svr_svc_uuid =
-    BLE_UUID128_INIT(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                     0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00);
-    // = 00FFEEDD-CCBB-AA99-8877-665544332211 (тестовый!)
+    BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+                     0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e);
+    // = 6E400001-B5A3-F393-E0A9-E50E24DCCA9E (Nordic UART Service)
 
 static const ble_uuid128_t gatt_svr_chr_tx_uuid =
-    BLE_UUID128_INIT(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                     0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x03);
-    // = 03FFEEDD-CCBB-AA99-8877-665544332211
+    BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+                     0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
+    // = 6E400003-B5A3-F393-E0A9-E50E24DCCA9E (TX characteristic)
 
 static const ble_uuid128_t gatt_svr_chr_rx_uuid =
-    BLE_UUID128_INIT(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                     0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x02);
-    // = 02FFEEDD-CCBB-AA99-8877-665544332211
+    BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+                     0x93, 0xf3, 0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e);
+    // = 6E400002-B5A3-F393-E0A9-E50E24DCCA9E (RX characteristic)
 
 // Глобальные переменные
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -394,7 +394,7 @@ static void ble_advertise(void) {
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER,
+    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
                           &adv_params, gap_event_handler, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to start advertising: %d", rc);
@@ -458,24 +458,8 @@ static void on_ble_sync(void) {
              uuid_bytes[3], uuid_bytes[2], uuid_bytes[1], uuid_bytes[0]);
     ESP_LOGI(TAG, "   Expected: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
 
-    // ========================================
-    // ТЕСТОВЫЙ КОД: Установка кастомного MAC адреса
-    // ========================================
-    uint8_t custom_mac[6] = {0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
-    int rc = ble_hs_id_set_rnd(custom_mac);
-    if (rc == 0) {
-        uint8_t addr[6];
-        rc = ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr, NULL);
-        if (rc == 0) {
-            ESP_LOGI(TAG, "✅ Custom MAC address set: %02X:%02X:%02X:%02X:%02X:%02X",
-                     addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
-        }
-    } else {
-        ESP_LOGW(TAG, "Failed to set custom MAC address: %d", rc);
-    }
-
     // Установка предпочтительного PHY на 2M для увеличения скорости
-    rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK);
+    int rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK);
     if (rc == 0) {
         ESP_LOGI(TAG, "2M PHY enabled for maximum throughput");
     } else {
