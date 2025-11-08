@@ -51,41 +51,15 @@ static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t tx_char_val_handle;
 static uint16_t rx_char_val_handle;
 static bool notify_enabled = false;
+static uint16_t current_mtu = 23;  // Минимальный MTU по умолчанию (23 байта)
 
 /**
- * @brief Callback для TX характеристики
+ * @brief Callback для CCCD дескриптора (Client Characteristic Configuration)
+ * ОТДЕЛЬНЫЙ callback для управления подпиской на уведомления
  */
-static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
-                                   struct ble_gatt_access_ctxt *ctxt, void *arg) {
+static int gatt_svr_dsc_access_cccd(uint16_t conn_handle, uint16_t attr_handle,
+                                     struct ble_gatt_access_ctxt *ctxt, void *arg) {
     switch (ctxt->op) {
-    case BLE_GATT_ACCESS_OP_READ_CHR:
-        // Client читает TX характеристику - возвращаем данные из буфера
-        // Используем статический буфер для избежания stack overflow
-        {
-            static uint8_t temp_buf[256]; // Статический буфер - безопасно для callback
-
-            if (!g_ble_tx_buffer) {
-                // Буфер не инициализирован - возвращаем пустоту
-                static const uint8_t empty = 0;
-                int rc = os_mbuf_append(ctxt->om, &empty, 1);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            }
-
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-            size_t to_read = avail > 256 ? 256 : avail;
-
-            if (to_read > 0) {
-                size_t read = ring_buffer_read(g_ble_tx_buffer, temp_buf, to_read);
-                int rc = os_mbuf_append(ctxt->om, temp_buf, read);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            } else {
-                // Нет данных
-                static const uint8_t empty = 0;
-                int rc = os_mbuf_append(ctxt->om, &empty, 1);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            }
-        }
-
     case BLE_GATT_ACCESS_OP_READ_DSC:
         // Client читает CCCD дескриптор
         {
@@ -96,7 +70,7 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
         }
 
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
-        // Client подписался на уведомления (CCCD)
+        // Client подписывается/отписывается от уведомлений
         {
             uint16_t val = 0;
             os_mbuf_copydata(ctxt->om, 0, sizeof(val), &val);
@@ -119,6 +93,25 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
             ESP_LOGI(TAG, "===========================================");
         }
         return 0;
+
+    default:
+        ESP_LOGW(TAG, "CCCD: unhandled operation %d", ctxt->op);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+}
+
+/**
+ * @brief Callback для TX характеристики (ТОЛЬКО для NOTIFY, READ не поддерживается)
+ * Nordic UART Service TX характеристика использует ТОЛЬКО уведомления!
+ */
+static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
+                                   struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    switch (ctxt->op) {
+    case BLE_GATT_ACCESS_OP_READ_CHR:
+        // ❌ READ НЕ ПОДДЕРЖИВАЕТСЯ для TX характеристики Nordic UART Service
+        // Данные передаются ТОЛЬКО через notifications, а не через read!
+        ESP_LOGW(TAG, "TX characteristic READ not supported - use notifications!");
+        return BLE_ATT_ERR_READ_NOT_PERMITTED;
 
     default:
         ESP_LOGW(TAG, "TX characteristic: unhandled operation %d", ctxt->op);
@@ -167,18 +160,19 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
             .val_handle = &rx_char_val_handle
         }, {
-            // TX характеристика (NOTIFY + READ)
+            // TX характеристика (ТОЛЬКО NOTIFY - READ не поддерживается!)
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            // NOTIFY для передачи данных, READ для совместимости с клиентами
-            .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
+            // ТОЛЬКО NOTIFY! Nordic UART Service TX использует notifications, не read
+            .flags = BLE_GATT_CHR_F_NOTIFY,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
-                // Базовые флаги для CCCD
+                // Флаги для CCCD дескриптора
                 .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
-                .access_cb = gatt_svr_chr_access_tx,
+                // ОТДЕЛЬНЫЙ callback для CCCD (не смешивать с характеристикой!)
+                .access_cb = gatt_svr_dsc_access_cccd,
             }, {
                 0  // Терминатор массива дескрипторов
             } },
@@ -250,9 +244,26 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         break;
 
     case BLE_GAP_EVENT_MTU:
-        ESP_LOGI(TAG, "MTU update event; conn_handle=%d cid=%d mtu=%d",
-                 event->mtu.conn_handle, event->mtu.channel_id, event->mtu.value);
+        // MTU обновлён - сохраняем для корректной нарезки данных
+        current_mtu = event->mtu.value;
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "MTU UPDATED: %d bytes (payload: %d bytes)",
+                 current_mtu, current_mtu - 3);  // ATT header = 3 байта
+        ESP_LOGI(TAG, "===========================================");
         break;
+
+    case BLE_GAP_EVENT_CONN_UPDATE_REQ:
+        // Client запрашивает обновление параметров соединения
+        ESP_LOGI(TAG, "Connection update request:");
+        ESP_LOGI(TAG, "  itvl_min=%d itvl_max=%d latency=%d timeout=%d",
+                 event->conn_update_req.peer_params->itvl_min,
+                 event->conn_update_req.peer_params->itvl_max,
+                 event->conn_update_req.peer_params->latency,
+                 event->conn_update_req.peer_params->supervision_timeout);
+
+        // Принимаем запрос - можно добавить валидацию параметров
+        // Для максимальной совместимости принимаем любые разумные параметры
+        return 0;  // 0 = accept, BLE_ERR_CONN_PARMS = reject
 
     case BLE_GAP_EVENT_ENC_CHANGE:
         if (event->enc_change.status == 0) {
@@ -454,7 +465,18 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;      // Display Only - показываем фиксированный PIN
     ble_hs_cfg.sm_bonding = 1;                           // Включить bonding (сохраняем ключи)
     ble_hs_cfg.sm_mitm = 1;                              // ВКЛЮЧИТЬ MITM для запроса PIN-кода
-    ble_hs_cfg.sm_sc = 0;                                // ОТКЛЮЧИТЬ Secure Connections (иначе будет Numeric Comparison)
+
+    // ⚠️ ВАЖНО: sm_sc влияет на метод спаривания:
+    // sm_sc=1 (LE Secure Connections): Современный метод, ТРЕБУЕТСЯ для iOS 13+
+    //         - Использует Numeric Comparison вместо PIN ввода
+    //         - Более безопасно, но требует подтверждения на обоих устройствах
+    // sm_sc=0 (Legacy Pairing): Старый метод, работает на всех устройствах
+    //         - Позволяет использовать фиксированный 6-значный PIN
+    //         - НО может НЕ РАБОТАТЬ на новых iOS устройствах!
+    //
+    // РЕШЕНИЕ: Если нужна iOS совместимость - установите sm_sc=1 и обработайте
+    //          BLE_SM_IOACT_NUMCMP в gap_event_handler (уже реализовано, строка 294)
+    ble_hs_cfg.sm_sc = 0;                                // Legacy pairing для фиксированного PIN
     ble_hs_cfg.sm_keypress = 0;                          // Отключить keypress notifications
 
     // КРИТИЧЕСКИ ВАЖНО для bonding: распространяем ВСЕ типы ключей
