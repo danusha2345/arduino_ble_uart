@@ -340,11 +340,33 @@ static void ble_advertise(void) {
     adv_fields.num_uuids128 = 1;
     adv_fields.uuids128_is_complete = 1;
 
+    // ========================================
+    // ДИАГНОСТИКА: Логируем что ИМЕННО будет передано в advertising
+    // ========================================
+    ESP_LOGI(TAG, "📡 Preparing ADVERTISING DATA:");
+    ESP_LOGI(TAG, "   Flags: 0x%02X (General Discoverable + BR/EDR Not Supported)", adv_fields.flags);
+    ESP_LOGI(TAG, "   TX Power: %d dBm", adv_fields.tx_pwr_lvl);
+
+    const uint8_t *adv_uuid = gatt_svr_svc_uuid.value;
+    ESP_LOGI(TAG, "   Service UUID (128-bit) to advertise:");
+    ESP_LOGI(TAG, "     Raw bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+             adv_uuid[0], adv_uuid[1], adv_uuid[2], adv_uuid[3],
+             adv_uuid[4], adv_uuid[5], adv_uuid[6], adv_uuid[7],
+             adv_uuid[8], adv_uuid[9], adv_uuid[10], adv_uuid[11],
+             adv_uuid[12], adv_uuid[13], adv_uuid[14], adv_uuid[15]);
+    ESP_LOGI(TAG, "     Standard: %02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             adv_uuid[15], adv_uuid[14], adv_uuid[13], adv_uuid[12],
+             adv_uuid[11], adv_uuid[10], adv_uuid[9], adv_uuid[8],
+             adv_uuid[7], adv_uuid[6], adv_uuid[5], adv_uuid[4],
+             adv_uuid[3], adv_uuid[2], adv_uuid[1], adv_uuid[0]);
+    ESP_LOGI(TAG, "     Expected:  6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+
     int rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to set advertising fields: %d", rc);
+        ESP_LOGE(TAG, "❌ Failed to set advertising fields: %d", rc);
         return;
     }
+    ESP_LOGI(TAG, "   ✅ Advertising data set successfully");
 
     // Scan response packet (до 31 байта): Имя устройства
     struct ble_hs_adv_fields rsp_fields = {0};
@@ -352,11 +374,15 @@ static void ble_advertise(void) {
     rsp_fields.name_len = strlen(BLE_DEVICE_NAME);
     rsp_fields.name_is_complete = 1;
 
+    ESP_LOGI(TAG, "📡 Preparing SCAN RESPONSE DATA:");
+    ESP_LOGI(TAG, "   Device Name: \"%s\" (length: %d bytes)", BLE_DEVICE_NAME, rsp_fields.name_len);
+
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to set scan response fields: %d", rc);
+        ESP_LOGE(TAG, "❌ Failed to set scan response fields: %d", rc);
         return;
     }
+    ESP_LOGI(TAG, "   ✅ Scan response data set successfully");
 
     // Параметры advertising
     struct ble_gap_adv_params adv_params = {0};
@@ -411,10 +437,26 @@ static void on_ble_sync(void) {
     ESP_LOGI(TAG, "BLE host synced");
 
     // ========================================
-    // ТЕСТОВЫЙ КОД: Установка кастомного MAC адреса
-    // Цель: проверить кэширование BLE на телефоне
+    // ДИАГНОСТИКА: Проверка UUID сервиса
     // ========================================
-    uint8_t custom_mac[6] = {0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};  // CC:DD:EE:FF:00:11
+    const uint8_t *uuid_bytes = gatt_svr_svc_uuid.value;
+    ESP_LOGI(TAG, "🔍 Service UUID (little-endian bytes):");
+    ESP_LOGI(TAG, "   %02X %02X %02X %02X - %02X %02X - %02X %02X - %02X %02X - %02X %02X %02X %02X %02X %02X",
+             uuid_bytes[0], uuid_bytes[1], uuid_bytes[2], uuid_bytes[3],
+             uuid_bytes[4], uuid_bytes[5], uuid_bytes[6], uuid_bytes[7],
+             uuid_bytes[8], uuid_bytes[9], uuid_bytes[10], uuid_bytes[11],
+             uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]);
+    ESP_LOGI(TAG, "   Standard format: %02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             uuid_bytes[15], uuid_bytes[14], uuid_bytes[13], uuid_bytes[12],
+             uuid_bytes[11], uuid_bytes[10], uuid_bytes[9], uuid_bytes[8],
+             uuid_bytes[7], uuid_bytes[6], uuid_bytes[5], uuid_bytes[4],
+             uuid_bytes[3], uuid_bytes[2], uuid_bytes[1], uuid_bytes[0]);
+    ESP_LOGI(TAG, "   Expected: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+
+    // ========================================
+    // ТЕСТОВЫЙ КОД: Установка кастомного MAC адреса
+    // ========================================
+    uint8_t custom_mac[6] = {0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
     int rc = ble_hs_id_set_rnd(custom_mac);
     if (rc == 0) {
         uint8_t addr[6];

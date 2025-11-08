@@ -33,7 +33,7 @@
 #elif CONFIG_TARGET_ESP32_C6
     #define TARGET_ESP32_C6 1
     #define BOARD_NAME "ESP32-C6"
-    #define BLE_DEVICE_NAME "UM980_NEW_TEST"
+    #define BLE_DEVICE_NAME "UM980_C6_GPS"
     #define WIFI_AP_SSID "UM980_GPS_BRIDGE_C6"
 
     // Пины для ESP32-C6 (Tenstar SuperMini) с fallback значениями
@@ -111,7 +111,7 @@
     #warning "Target board not selected in menuconfig, defaulting to ESP32-C6"
     #define TARGET_ESP32_C6 1
     #define BOARD_NAME "ESP32-C6"
-    #define BLE_DEVICE_NAME "UM980_NEW_TEST"
+    #define BLE_DEVICE_NAME "UM980_C6_GPS"
     #define WIFI_AP_SSID "UM980_GPS_BRIDGE_C6"
 
     // Пины для ESP32-C6 (значения по умолчанию)
