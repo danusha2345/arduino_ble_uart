@@ -113,6 +113,14 @@ size_t ring_buffer_write(ring_buffer_t *rb, const uint8_t *data, size_t len) {
             // Буфер полон - перезаписываем старые данные
             rb->tail = (rb->tail + 1) % rb->size;
             rb->overflow = true;
+
+            // ДИАГНОСТИКА: логируем overflow (но не слишком часто)
+            static uint32_t last_overflow_log = 0;
+            uint32_t now = xTaskGetTickCount();
+            if (now - last_overflow_log > pdMS_TO_TICKS(1000)) {  // Раз в секунду
+                ESP_LOGW("RingBuffer", "⚠️ BUFFER OVERFLOW - data loss! (buffer full)");
+                last_overflow_log = now;
+            }
         }
 
         rb->data[rb->head] = data[i];
