@@ -278,7 +278,7 @@ static void create_ui(void) {
     }
 
     // Инициализируем начальный экран
-    lv_label_set_text(label_line[0], "=== GNSS Bridge ===");
+    lv_label_set_text(label_line[0], "BLE:OFF WiFi:0");
     lv_label_set_text(label_line[1], "ESP32-C6");
     lv_label_set_text(label_line[2], "Display OK!");
     lv_label_set_text(label_line[3], "");
@@ -338,8 +338,12 @@ void display_update_gps_data(void) {
     // ВСЕГДА показываем все поля - используем прочерки когда GPS не валиден
     int line = 0;
 
-    // Строка 0: Заголовок (белый)
-    lv_label_set_text(label_line[line++], "=== GNSS Bridge ===");
+    // Строка 0: Статус BLE и WiFi (белый)
+    bool ble_conn = ble_is_connected();
+    int wifi_clients = wifi_get_client_count();
+    snprintf(buf, sizeof(buf), "BLE:%s WiFi:%d",
+             ble_conn ? "ON" : "OFF", wifi_clients);
+    lv_label_set_text(label_line[line++], buf);
 
     // Строка 1: Спутники и тип фикса (жёлтый)
     const char *fix_text[] = {

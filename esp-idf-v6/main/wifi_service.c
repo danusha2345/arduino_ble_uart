@@ -288,3 +288,11 @@ static void wifi_connection_task(void *pvParameters) {
 
     vTaskDelete(NULL);
 }
+
+/**
+ * @brief Получить количество подключенных WiFi клиентов
+ * @return Количество активных клиентов (0-4)
+ */
+int wifi_get_client_count(void) {
+    return active_clients;
+}

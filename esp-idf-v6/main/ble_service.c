@@ -646,3 +646,11 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
         last_log = now;
     }
 }
+
+/**
+ * @brief Получить статус BLE подключения
+ * @return true если клиент подключен, false если нет
+ */
+bool ble_is_connected(void) {
+    return conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
