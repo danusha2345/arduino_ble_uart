@@ -381,14 +381,24 @@ void display_update_gps_data(void) {
     }
     lv_label_set_text(label_line[line++], buf);
 
-    // Строка 5: Время (белый)
+    // Строка 5: Время с индикатором часового пояса (белый)
     if (gps_valid && g_gps_data.time_valid) {
         char time_str[16];
         format_local_time(g_gps_data.hour, g_gps_data.minute, g_gps_data.second,
                         g_gps_data.timezone_offset_minutes, time_str, sizeof(time_str));
-        snprintf(buf, sizeof(buf), "Time: %s", time_str);
+        // Добавляем индикатор часового пояса
+        if (g_user_timezone_hours == 0) {
+            snprintf(buf, sizeof(buf), "Time: %s UTC", time_str);
+        } else {
+            snprintf(buf, sizeof(buf), "Time: %s UTC%+d", time_str, g_user_timezone_hours);
+        }
     } else {
-        snprintf(buf, sizeof(buf), "Time: --:--:--");
+        // Показываем timezone даже когда нет времени
+        if (g_user_timezone_hours == 0) {
+            snprintf(buf, sizeof(buf), "Time: --:--:-- UTC");
+        } else {
+            snprintf(buf, sizeof(buf), "Time: --:--:-- UTC%+d", g_user_timezone_hours);
+        }
     }
     lv_label_set_text(label_line[line++], buf);
 
