@@ -341,8 +341,9 @@ void display_update_gps_data(void) {
     // Строка 0: Статус BLE и WiFi (белый)
     bool ble_conn = ble_is_connected();
     int wifi_clients = wifi_get_client_count();
-    snprintf(buf, sizeof(buf), "BLE:%s WiFi:%d",
-             ble_conn ? "ON" : "OFF", wifi_clients);
+    snprintf(buf, sizeof(buf), "BLE:%s WiFi:%s",
+             ble_conn ? "ON" : "OFF",
+             wifi_clients > 0 ? "ON" : "OFF");
     lv_label_set_text(label_line[line++], buf);
 
     // Строка 1: Спутники и тип фикса (жёлтый)
