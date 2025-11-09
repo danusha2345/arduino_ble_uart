@@ -188,3 +188,10 @@
 // Константы GPS
 #define GPS_UPDATE_INTERVAL_MS  100   // Интервал обновления GPS данных
 #define GPS_TIMEOUT_MS          5000  // Таймаут потери сигнала GPS
+
+// Часовой пояс по умолчанию (UTC+3 для Москвы)
+#define DEFAULT_TIMEZONE_HOURS  3
+
+// Ключ NVS для хранения timezone
+#define NVS_NAMESPACE           "gnss_config"
+#define NVS_KEY_TIMEZONE        "timezone"

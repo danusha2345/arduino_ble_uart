@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -19,6 +20,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 // #include "driver/i2c.h" // Устарело в ESP-IDF v6, не нужно для ESP32-C6
@@ -45,6 +47,9 @@ sat_data_t g_sat_data = {0};
 // Буферы для данных (используются в других модулях через extern)
 ring_buffer_t *g_ble_tx_buffer = NULL;  // TX буфер (GNSS -> BLE/WiFi)
 ring_buffer_t *g_ble_rx_buffer = NULL;  // RX буфер (BLE/WiFi -> GNSS)
+
+// Пользовательский часовой пояс (в часах)
+int8_t g_user_timezone_hours = DEFAULT_TIMEZONE_HOURS;
 
 // Хэндлы задач
 static TaskHandle_t uart_task_handle = NULL;
@@ -262,6 +267,85 @@ static void broadcast_task(void *pvParameters) {
 }
 
 // ==================================================
+// ФУНКЦИИ ДЛЯ РАБОТЫ С TIMEZONE В NVS
+// ==================================================
+
+/**
+ * @brief Загрузить timezone из NVS
+ * @return Часовой пояс в часах (от -12 до +14), или DEFAULT_TIMEZONE_HOURS при ошибке
+ */
+static int8_t load_timezone_from_nvs(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "NVS не открыт, используем дефолтный timezone: UTC%+d", DEFAULT_TIMEZONE_HOURS);
+        return DEFAULT_TIMEZONE_HOURS;
+    }
+
+    int8_t timezone = DEFAULT_TIMEZONE_HOURS;
+    err = nvs_get_i8(nvs_handle, NVS_KEY_TIMEZONE, &timezone);
+
+    nvs_close(nvs_handle);
+
+    if (err == ESP_OK) {
+        // Проверка диапазона
+        if (timezone < -12 || timezone > 14) {
+            ESP_LOGW(TAG, "Некорректный timezone %d, используем дефолт %+d", timezone, DEFAULT_TIMEZONE_HOURS);
+            return DEFAULT_TIMEZONE_HOURS;
+        }
+        ESP_LOGI(TAG, "Загружен timezone из NVS: UTC%+d", timezone);
+        return timezone;
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "Timezone не найден в NVS, используем дефолт: UTC%+d", DEFAULT_TIMEZONE_HOURS);
+        return DEFAULT_TIMEZONE_HOURS;
+    } else {
+        ESP_LOGW(TAG, "Ошибка чтения NVS: %s, используем дефолт: UTC%+d",
+                 esp_err_to_name(err), DEFAULT_TIMEZONE_HOURS);
+        return DEFAULT_TIMEZONE_HOURS;
+    }
+}
+
+/**
+ * @brief Сохранить timezone в NVS
+ * @param timezone Часовой пояс в часах (от -12 до +14)
+ * @return ESP_OK или код ошибки
+ */
+static esp_err_t save_timezone_to_nvs(int8_t timezone) {
+    // Проверка диапазона
+    if (timezone < -12 || timezone > 14) {
+        ESP_LOGW(TAG, "Некорректный timezone %d (должен быть от -12 до +14)", timezone);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ошибка открытия NVS: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_i8(nvs_handle, NVS_KEY_TIMEZONE, timezone);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ошибка записи timezone в NVS: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Timezone сохранён в NVS: UTC%+d", timezone);
+    } else {
+        ESP_LOGE(TAG, "Ошибка commit NVS: %s", esp_err_to_name(err));
+    }
+
+    return err;
+}
+
+// ==================================================
 // ЗАДАЧА UART
 // ==================================================
 
@@ -328,17 +412,57 @@ static void uart_task(void *pvParameters) {
                                      (rx_data[0] >= 'A' && rx_data[0] <= 'Z') ||
                                      (rx_data[0] >= 'a' && rx_data[0] <= 'z')));
 
-                    // Отправляем в GPS модуль
-                    uart_write_bytes(UART_NUM_1, (const char*)rx_data, read);
+                    // Проверяем команду timezone: Z+3, Z-5, Z+0
+                    bool timezone_command = false;
+                    if (is_ascii && read >= 2 && (rx_data[0] == 'Z' || rx_data[0] == 'z')) {
+                        // Парсим: Z+3, Z-5, Z+0
+                        char tz_str[8] = {0};
+                        size_t copy_len = (read < sizeof(tz_str)) ? read : sizeof(tz_str) - 1;
+                        memcpy(tz_str, rx_data, copy_len);
 
-                    // Для ASCII команд добавляем \r\n (если его ещё нет)
-                    if (is_ascii && !is_rtcm3) {
-                        // Проверяем, есть ли уже \r\n в конце
-                        bool has_crlf = (read >= 2 && rx_data[read-2] == '\r' && rx_data[read-1] == '\n') ||
-                                       (read >= 1 && rx_data[read-1] == '\n');
+                        // Убираем \r\n если есть
+                        for (size_t i = 0; i < copy_len; i++) {
+                            if (tz_str[i] == '\r' || tz_str[i] == '\n') {
+                                tz_str[i] = '\0';
+                                break;
+                            }
+                        }
 
-                        if (!has_crlf) {
-                            uart_write_bytes(UART_NUM_1, "\r\n", 2);
+                        // Парсим число после Z
+                        int tz_value;
+                        if (sscanf(tz_str + 1, "%d", &tz_value) == 1) {
+                            if (tz_value >= -12 && tz_value <= 14) {
+                                g_user_timezone_hours = (int8_t)tz_value;
+                                g_gps_data.timezone_offset_minutes = g_user_timezone_hours * 60;
+
+                                esp_err_t err = save_timezone_to_nvs(g_user_timezone_hours);
+                                if (err == ESP_OK) {
+                                    ESP_LOGI(TAG, "✅ Timezone установлен: UTC%+d (команда: %s)",
+                                             g_user_timezone_hours, tz_str);
+                                } else {
+                                    ESP_LOGW(TAG, "⚠️  Timezone установлен: UTC%+d, но не сохранён в NVS",
+                                             g_user_timezone_hours);
+                                }
+                                timezone_command = true;
+                            } else {
+                                ESP_LOGW(TAG, "❌ Некорректный timezone: %d (должен быть от -12 до +14)", tz_value);
+                            }
+                        }
+                    }
+
+                    // Отправляем в GPS модуль (если не команда timezone)
+                    if (!timezone_command) {
+                        uart_write_bytes(UART_NUM_1, (const char*)rx_data, read);
+
+                        // Для ASCII команд добавляем \r\n (если его ещё нет)
+                        if (is_ascii && !is_rtcm3) {
+                            // Проверяем, есть ли уже \r\n в конце
+                            bool has_crlf = (read >= 2 && rx_data[read-2] == '\r' && rx_data[read-1] == '\n') ||
+                                           (read >= 1 && rx_data[read-1] == '\n');
+
+                            if (!has_crlf) {
+                                uart_write_bytes(UART_NUM_1, "\r\n", 2);
+                            }
                         }
                     }
                 }
@@ -370,6 +494,11 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Загрузка timezone из NVS
+    g_user_timezone_hours = load_timezone_from_nvs();
+    g_gps_data.timezone_offset_minutes = g_user_timezone_hours * 60;
+    ESP_LOGI(TAG, "Текущий timezone: UTC%+d", g_user_timezone_hours);
 
     // Создание буферов
     g_ble_tx_buffer = ring_buffer_create(RING_BUFFER_SIZE);

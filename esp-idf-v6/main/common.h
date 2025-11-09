@@ -80,6 +80,9 @@ extern sat_data_t g_sat_data;
 extern ring_buffer_t *g_ble_tx_buffer;
 extern ring_buffer_t *g_ble_rx_buffer;
 
+// Пользовательский часовой пояс (в часах, от -12 до +14)
+extern int8_t g_user_timezone_hours;
+
 // ==================================================
 // ФУНКЦИИ RING BUFFER
 // ==================================================
