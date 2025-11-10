@@ -17,7 +17,7 @@
 #include "config.h"
 #include "common.h"
 #include "Vernon_ST7789T/Vernon_ST7789T.h"  // Кастомный драйвер ST7789T
-
+LV_FONT_DECLARE(lv_font_montserrat_20_COMPRESSED);
 static const char *TAG = "Display";
 
 // ==================================================
@@ -272,7 +272,7 @@ static void create_ui(void) {
         lv_label_set_text(label_line[i], "");
         lv_obj_set_style_text_color(label_line[i], line_colors[i], 0);
         // Используем шрифт Montserrat 20 (~22-23 символа на строку для 240px ширины)
-        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_20_COMPRESSED, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, x_offset, y_pos);
         y_pos += line_height;
     }
