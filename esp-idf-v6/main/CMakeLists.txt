@@ -5,7 +5,9 @@ idf_component_register(
         "wifi_service.c"
         "gps_parser.c"
         "display_manager.c"
-    INCLUDE_DIRS "."
+        "fonts/roboto_condensed_20.c"
+        "Vernon_ST7789T/Vernon_ST7789T.c"
+    INCLUDE_DIRS "." "Vernon_ST7789T"
     PRIV_REQUIRES
         nvs_flash
         esp_wifi
@@ -22,9 +24,4 @@ idf_component_register(
         freertos
         lvgl
         esp_event
-)
-
-# Определения для компиляции
-target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    "-DLV_CONF_INCLUDE_SIMPLE"
 )

@@ -137,3 +137,6 @@ core.*
 
 # Release build artifacts
 release/
+/esp-idf-v6/ESP32-C6-LCD-1.47-Test
+*.jpg
+*.lock

@@ -33,51 +33,38 @@ static const char *TAG = "BLE";
 // Forward declarations
 static void ble_advertise(void);
 
-// Nordic UART Service UUIDs
+// Nordic UART Service UUIDs (стандартные)
+// NOTE: nRF Connect может показывать UUID по-разному в разных разделах
+// (Server vs Client). Это нормально - устройство работает правильно.
 static const ble_uuid128_t gatt_svr_svc_uuid =
     BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
                      0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e);
+    // = 6E400001-B5A3-F393-E0A9-E50E24DCCA9E (Nordic UART Service)
 
 static const ble_uuid128_t gatt_svr_chr_tx_uuid =
     BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
                      0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
+    // = 6E400003-B5A3-F393-E0A9-E50E24DCCA9E (TX characteristic)
 
 static const ble_uuid128_t gatt_svr_chr_rx_uuid =
     BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
                      0x93, 0xf3, 0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e);
+    // = 6E400002-B5A3-F393-E0A9-E50E24DCCA9E (RX characteristic)
 
 // Глобальные переменные
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t tx_char_val_handle;
+static uint16_t rx_char_val_handle;
 static bool notify_enabled = false;
+static uint16_t current_mtu = 23;  // Минимальный MTU по умолчанию (23 байта)
 
 /**
- * @brief Callback для TX характеристики
+ * @brief Callback для CCCD дескриптора (Client Characteristic Configuration)
+ * ОТДЕЛЬНЫЙ callback для управления подпиской на уведомления
  */
-static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
-                                   struct ble_gatt_access_ctxt *ctxt, void *arg) {
+static int gatt_svr_dsc_access_cccd(uint16_t conn_handle, uint16_t attr_handle,
+                                     struct ble_gatt_access_ctxt *ctxt, void *arg) {
     switch (ctxt->op) {
-    case BLE_GATT_ACCESS_OP_READ_CHR:
-        // Client читает TX характеристику - отдаем данные из буфера (fallback для клиентов без Notify)
-        {
-            uint8_t temp_buf[512];
-            size_t avail = ring_buffer_available(g_ble_tx_buffer);
-            size_t to_read = avail > 512 ? 512 : avail;
-
-            if (to_read > 0 && g_ble_tx_buffer) {
-                size_t read = ring_buffer_read(g_ble_tx_buffer, temp_buf, to_read);
-                int rc = os_mbuf_append(ctxt->om, temp_buf, read);
-                ESP_LOGI(TAG, "TX characteristic READ by client: %d bytes (conn_handle=%d)", read, conn_handle);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            } else {
-                // Нет данных - возвращаем пустое значение
-                static uint8_t empty_val = 0;
-                int rc = os_mbuf_append(ctxt->om, &empty_val, sizeof(empty_val));
-                ESP_LOGI(TAG, "TX characteristic READ by client: empty (conn_handle=%d)", conn_handle);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            }
-        }
-
     case BLE_GATT_ACCESS_OP_READ_DSC:
         // Client читает CCCD дескриптор
         {
@@ -88,17 +75,48 @@ static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
         }
 
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
-        // Client подписался на уведомления (CCCD)
+        // Client подписывается/отписывается от уведомлений
         {
             uint16_t val = 0;
             os_mbuf_copydata(ctxt->om, 0, sizeof(val), &val);
-            ESP_LOGI(TAG, "CCCD write: value=0x%04x (bytes read=%d)", val, sizeof(val));
 
             // CCCD: 0x0001 = notifications, 0x0002 = indications, 0x0000 = disabled
+            bool prev_state = notify_enabled;
             notify_enabled = (val == 0x0001);
-            ESP_LOGI(TAG, "TX Notify %s (CCCD=0x%04x)", notify_enabled ? "ENABLED" : "DISABLED", val);
+
+            ESP_LOGI(TAG, "===========================================");
+            ESP_LOGI(TAG, "CCCD WRITE: value=0x%04x", val);
+            ESP_LOGI(TAG, "TX Notifications: %s → %s",
+                     prev_state ? "ENABLED" : "DISABLED",
+                     notify_enabled ? "ENABLED" : "DISABLED");
+
+            if (notify_enabled) {
+                ESP_LOGI(TAG, "✅ BLE TX now active - data will flow!");
+            } else {
+                ESP_LOGW(TAG, "❌ BLE TX disabled - data blocked!");
+            }
+            ESP_LOGI(TAG, "===========================================");
         }
         return 0;
+
+    default:
+        ESP_LOGW(TAG, "CCCD: unhandled operation %d", ctxt->op);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+}
+
+/**
+ * @brief Callback для TX характеристики (ТОЛЬКО для NOTIFY, READ не поддерживается)
+ * Nordic UART Service TX характеристика использует ТОЛЬКО уведомления!
+ */
+static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
+                                   struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    switch (ctxt->op) {
+    case BLE_GATT_ACCESS_OP_READ_CHR:
+        // ❌ READ НЕ ПОДДЕРЖИВАЕТСЯ для TX характеристики Nordic UART Service
+        // Данные передаются ТОЛЬКО через notifications, а не через read!
+        ESP_LOGW(TAG, "TX characteristic READ not supported - use notifications!");
+        return BLE_ATT_ERR_READ_NOT_PERMITTED;
 
     default:
         ESP_LOGW(TAG, "TX characteristic: unhandled operation %d", ctxt->op);
@@ -145,19 +163,21 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             .access_cb = gatt_svr_chr_access_rx,
             // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            .val_handle = &rx_char_val_handle
         }, {
-            // TX характеристика (NOTIFY + READ) - позволяет клиенту прочитать перед подпиской
+            // TX характеристика (ТОЛЬКО NOTIFY - READ не поддерживается!)
             .uuid = &gatt_svr_chr_tx_uuid.u,
             .access_cb = gatt_svr_chr_access_tx,
             .val_handle = &tx_char_val_handle,
-            // Базовые флаги - характеристика видна, pairing происходит автоматически при подключении
-            .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
+            // ТОЛЬКО NOTIFY! Nordic UART Service TX использует notifications, не read
+            .flags = BLE_GATT_CHR_F_NOTIFY,
             .descriptors = (struct ble_gatt_dsc_def[]) { {
                 // CCCD дескриптор для управления notifications (ОБЯЗАТЕЛЕН!)
                 .uuid = BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16),
-                // Базовые флаги для CCCD
+                // Флаги для CCCD дескриптора
                 .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE,
-                .access_cb = gatt_svr_chr_access_tx,
+                // ОТДЕЛЬНЫЙ callback для CCCD (не смешивать с характеристикой!)
+                .access_cb = gatt_svr_dsc_access_cccd,
             }, {
                 0  // Терминатор массива дескрипторов
             } },
@@ -174,12 +194,16 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
 static int gap_event_handler(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-        ESP_LOGI(TAG, "Connection %s; status=%d",
-                 event->connect.status == 0 ? "established" : "failed",
-                 event->connect.status);
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "BLE CONNECTION EVENT: status=%d (%s)",
+                 event->connect.status,
+                 event->connect.status == 0 ? "SUCCESS" : "FAILED");
 
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
+            ESP_LOGI(TAG, "✅ BLE Client connected! conn_handle=%d", conn_handle);
+            ESP_LOGI(TAG, "Waiting for client to enable notifications...");
+            ESP_LOGI(TAG, "===========================================");
             int rc;
 
             // Запрашиваем обновление параметров соединения для максимальной скорости
@@ -212,18 +236,39 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "Disconnect; reason=%d", event->disconnect.reason);
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "❌ BLE Client DISCONNECTED (reason=%d)", event->disconnect.reason);
+        ESP_LOGI(TAG, "Resetting connection state...");
         conn_handle = BLE_HS_CONN_HANDLE_NONE;
         notify_enabled = false;
+        ESP_LOGI(TAG, "Restarting advertising...");
+        ESP_LOGI(TAG, "===========================================");
 
         // Перезапускаем advertising
         ble_advertise();
         break;
 
     case BLE_GAP_EVENT_MTU:
-        ESP_LOGI(TAG, "MTU update event; conn_handle=%d cid=%d mtu=%d",
-                 event->mtu.conn_handle, event->mtu.channel_id, event->mtu.value);
+        // MTU обновлён - сохраняем для корректной нарезки данных
+        current_mtu = event->mtu.value;
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "MTU UPDATED: %d bytes (payload: %d bytes)",
+                 current_mtu, current_mtu - 3);  // ATT header = 3 байта
+        ESP_LOGI(TAG, "===========================================");
         break;
+
+    case BLE_GAP_EVENT_CONN_UPDATE_REQ:
+        // Client запрашивает обновление параметров соединения
+        ESP_LOGI(TAG, "Connection update request:");
+        ESP_LOGI(TAG, "  itvl_min=%d itvl_max=%d latency=%d timeout=%d",
+                 event->conn_update_req.peer_params->itvl_min,
+                 event->conn_update_req.peer_params->itvl_max,
+                 event->conn_update_req.peer_params->latency,
+                 event->conn_update_req.peer_params->supervision_timeout);
+
+        // Принимаем запрос - можно добавить валидацию параметров
+        // Для максимальной совместимости принимаем любые разумные параметры
+        return 0;  // 0 = accept, BLE_ERR_CONN_PARMS = reject
 
     case BLE_GAP_EVENT_ENC_CHANGE:
         if (event->enc_change.status == 0) {
@@ -300,11 +345,42 @@ static void ble_advertise(void) {
     adv_fields.num_uuids128 = 1;
     adv_fields.uuids128_is_complete = 1;
 
+    // ВАЖНО! Добавляем Slave Connection Interval Range (как в Arduino версии)
+    // Это Type 0x12 в advertising packet
+    // Формат: 4 байта little-endian (min_interval, max_interval)
+    static const uint8_t slave_itvl_range[] = {
+        0x06, 0x00,  // Min interval: 6 * 1.25ms = 7.5ms
+        0x0C, 0x00   // Max interval: 12 * 1.25ms = 15ms
+    };
+    adv_fields.slave_itvl_range = slave_itvl_range;
+
+    // ========================================
+    // ДИАГНОСТИКА: Логируем что ИМЕННО будет передано в advertising
+    // ========================================
+    ESP_LOGI(TAG, "📡 Preparing ADVERTISING DATA:");
+    ESP_LOGI(TAG, "   Flags: 0x%02X (General Discoverable + BR/EDR Not Supported)", adv_fields.flags);
+    ESP_LOGI(TAG, "   TX Power: %d dBm", adv_fields.tx_pwr_lvl);
+
+    const uint8_t *adv_uuid = gatt_svr_svc_uuid.value;
+    ESP_LOGI(TAG, "   Service UUID (128-bit) to advertise:");
+    ESP_LOGI(TAG, "     Raw bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+             adv_uuid[0], adv_uuid[1], adv_uuid[2], adv_uuid[3],
+             adv_uuid[4], adv_uuid[5], adv_uuid[6], adv_uuid[7],
+             adv_uuid[8], adv_uuid[9], adv_uuid[10], adv_uuid[11],
+             adv_uuid[12], adv_uuid[13], adv_uuid[14], adv_uuid[15]);
+    ESP_LOGI(TAG, "     Standard: %02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             adv_uuid[15], adv_uuid[14], adv_uuid[13], adv_uuid[12],
+             adv_uuid[11], adv_uuid[10], adv_uuid[9], adv_uuid[8],
+             adv_uuid[7], adv_uuid[6], adv_uuid[5], adv_uuid[4],
+             adv_uuid[3], adv_uuid[2], adv_uuid[1], adv_uuid[0]);
+    ESP_LOGI(TAG, "     Expected:  6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+
     int rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to set advertising fields: %d", rc);
+        ESP_LOGE(TAG, "❌ Failed to set advertising fields: %d", rc);
         return;
     }
+    ESP_LOGI(TAG, "   ✅ Advertising data set successfully");
 
     // Scan response packet (до 31 байта): Имя устройства
     struct ble_hs_adv_fields rsp_fields = {0};
@@ -312,11 +388,15 @@ static void ble_advertise(void) {
     rsp_fields.name_len = strlen(BLE_DEVICE_NAME);
     rsp_fields.name_is_complete = 1;
 
+    ESP_LOGI(TAG, "📡 Preparing SCAN RESPONSE DATA:");
+    ESP_LOGI(TAG, "   Device Name: \"%s\" (length: %d bytes)", BLE_DEVICE_NAME, rsp_fields.name_len);
+
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to set scan response fields: %d", rc);
+        ESP_LOGE(TAG, "❌ Failed to set scan response fields: %d", rc);
         return;
     }
+    ESP_LOGI(TAG, "   ✅ Scan response data set successfully");
 
     // Параметры advertising
     struct ble_gap_adv_params adv_params = {0};
@@ -369,6 +449,23 @@ static void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
  */
 static void on_ble_sync(void) {
     ESP_LOGI(TAG, "BLE host synced");
+
+    // ========================================
+    // ДИАГНОСТИКА: Проверка UUID сервиса
+    // ========================================
+    const uint8_t *uuid_bytes = gatt_svr_svc_uuid.value;
+    ESP_LOGI(TAG, "🔍 Service UUID (little-endian bytes):");
+    ESP_LOGI(TAG, "   %02X %02X %02X %02X - %02X %02X - %02X %02X - %02X %02X - %02X %02X %02X %02X %02X %02X",
+             uuid_bytes[0], uuid_bytes[1], uuid_bytes[2], uuid_bytes[3],
+             uuid_bytes[4], uuid_bytes[5], uuid_bytes[6], uuid_bytes[7],
+             uuid_bytes[8], uuid_bytes[9], uuid_bytes[10], uuid_bytes[11],
+             uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]);
+    ESP_LOGI(TAG, "   Standard format: %02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             uuid_bytes[15], uuid_bytes[14], uuid_bytes[13], uuid_bytes[12],
+             uuid_bytes[11], uuid_bytes[10], uuid_bytes[9], uuid_bytes[8],
+             uuid_bytes[7], uuid_bytes[6], uuid_bytes[5], uuid_bytes[4],
+             uuid_bytes[3], uuid_bytes[2], uuid_bytes[1], uuid_bytes[0]);
+    ESP_LOGI(TAG, "   Expected: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
 
     // Установка предпочтительного PHY на 2M для увеличения скорости
     int rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK);
@@ -425,7 +522,18 @@ esp_err_t ble_service_init(void) {
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;      // Display Only - показываем фиксированный PIN
     ble_hs_cfg.sm_bonding = 1;                           // Включить bonding (сохраняем ключи)
     ble_hs_cfg.sm_mitm = 1;                              // ВКЛЮЧИТЬ MITM для запроса PIN-кода
-    ble_hs_cfg.sm_sc = 0;                                // ОТКЛЮЧИТЬ Secure Connections (иначе будет Numeric Comparison)
+
+    // ⚠️ ВАЖНО: sm_sc влияет на метод спаривания:
+    // sm_sc=1 (LE Secure Connections): Современный метод, ТРЕБУЕТСЯ для iOS 13+
+    //         - Использует Numeric Comparison вместо PIN ввода
+    //         - Более безопасно, но требует подтверждения на обоих устройствах
+    // sm_sc=0 (Legacy Pairing): Старый метод, работает на всех устройствах
+    //         - Позволяет использовать фиксированный 6-значный PIN
+    //         - НО может НЕ РАБОТАТЬ на новых iOS устройствах!
+    //
+    // РЕШЕНИЕ: Если нужна iOS совместимость - установите sm_sc=1 и обработайте
+    //          BLE_SM_IOACT_NUMCMP в gap_event_handler (уже реализовано, строка 294)
+    ble_hs_cfg.sm_sc = 0;                                // Legacy pairing для фиксированного PIN
     ble_hs_cfg.sm_keypress = 0;                          // Отключить keypress notifications
 
     // КРИТИЧЕСКИ ВАЖНО для bonding: распространяем ВСЕ типы ключей
@@ -439,7 +547,7 @@ esp_err_t ble_service_init(void) {
     // ШАГ 3: Регистрация GAP и GATT сервисов
     ble_svc_gap_init();
     ble_svc_gatt_init();
-
+    // ble_hs_cfg.reset_cb = on_reset;  
     ret = ble_gatts_count_cfg(gatt_svr_svcs);
     if (ret != 0) {
         ESP_LOGE(TAG, "ble_gatts_count_cfg failed: %d", ret);
@@ -477,17 +585,25 @@ esp_err_t ble_service_init(void) {
 void ble_broadcast_data(const uint8_t *data, size_t len) {
     if (!data || len == 0) return;
 
-    // Проверяем подключение и уведомления
-    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || !notify_enabled) {
+    // ДИАГНОСТИКА: Периодическое логирование состояния BLE
+    static uint32_t last_status_log = 0;
+    uint32_t now_status = xTaskGetTickCount();
+    if (now_status - last_status_log > pdMS_TO_TICKS(10000)) {  // Раз в 10 секунд
+        ESP_LOGI(TAG, "BLE STATUS: connected=%s, notify_enabled=%s, conn_handle=%d",
+                 conn_handle != BLE_HS_CONN_HANDLE_NONE ? "YES" : "NO",
+                 notify_enabled ? "YES" : "NO",
+                 conn_handle);
+        last_status_log = now_status;
+    }
+
+    // Проверяем подключение (как в Arduino версии - НЕ проверяем notify_enabled!)
+    // Arduino NimBLE автоматически отправляет notify() независимо от подписки клиента
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         // Диагностика (но не слишком часто)
         static uint32_t last_warn = 0;
         uint32_t now = xTaskGetTickCount();
         if (now - last_warn > pdMS_TO_TICKS(5000)) {  // Раз в 5 секунд
-            if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-                ESP_LOGW(TAG, "BLE not connected, skipping %d bytes", len);
-            } else if (!notify_enabled) {
-                ESP_LOGW(TAG, "BLE notifications not enabled by client, skipping %d bytes", len);
-            }
+            ESP_LOGW(TAG, "❌ BLE NOT CONNECTED - data blocked (%d bytes dropped)", len);
             last_warn = now;
         }
         return;
@@ -529,4 +645,12 @@ void ble_broadcast_data(const uint8_t *data, size_t len) {
         bytes_since_log = 0;
         last_log = now;
     }
+}
+
+/**
+ * @brief Получить статус BLE подключения
+ * @return true если клиент подключен, false если нет
+ */
+bool ble_is_connected(void) {
+    return conn_handle != BLE_HS_CONN_HANDLE_NONE;
 }

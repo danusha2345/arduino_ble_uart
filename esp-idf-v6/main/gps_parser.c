@@ -148,23 +148,6 @@ static bool parse_time(const char *time_str, int *hour, int *minute, int *second
     return true;
 }
 
-/**
- * @brief Вычисление смещения часового пояса от долготы
- * @param longitude Долгота в десятичных градусах
- * @return Смещение в минутах
- */
-static int estimate_timezone_offset_from_longitude(double longitude) {
-    // Каждые 15 градусов долготы = 1 час = 60 минут
-    // Положительная долгота (восток) дает положительное смещение
-    int offset_hours = (int)round(longitude / 15.0);
-
-    // Ограничиваем от -12 до +14 часов
-    if (offset_hours < -12) offset_hours = -12;
-    if (offset_hours > 14) offset_hours = 14;
-
-    return offset_hours * 60;  // Возвращаем в минутах
-}
-
 // ==================================================
 // ПАРСЕРЫ NMEA СООБЩЕНИЙ
 // ==================================================
@@ -244,9 +227,8 @@ static void parse_gns(const char *nmea) {
         double lon = convert_to_decimal_degrees(atof(fields[4]));
         if (fields[5][0] == 'W') lon = -lon;
         g_gps_data.longitude = lon;
-
-        // Вычисляем timezone offset от долготы
-        g_gps_data.timezone_offset_minutes = estimate_timezone_offset_from_longitude(lon);
+        // NOTE: timezone_offset_minutes устанавливается из NVS в main.c
+        // и изменяется только командой Z через BLE/WiFi
     }
 
     // Field 7: Mode indicators (GPS,GLONASS,Galileo,BDS,QZSS,NavIC)
