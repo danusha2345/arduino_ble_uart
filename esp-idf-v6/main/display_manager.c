@@ -18,6 +18,9 @@
 #include "common.h"
 #include "Vernon_ST7789T/Vernon_ST7789T.h"  // Кастомный драйвер ST7789T
 
+// Декларация кастомного шрифта Roboto Condensed 20px
+LV_FONT_DECLARE(roboto_condensed_20);
+
 static const char *TAG = "Display";
 
 // ==================================================
@@ -271,8 +274,8 @@ static void create_ui(void) {
         label_line[i] = lv_label_create(screen);
         lv_label_set_text(label_line[i], "");
         lv_obj_set_style_text_color(label_line[i], line_colors[i], 0);
-        // Используем шрифт Montserrat 16 (~25-27 символов на строку для 240px ширины)
-        lv_obj_set_style_text_font(label_line[i], &lv_font_montserrat_16, 0);
+        // Используем шрифт Roboto Condensed 20 (~28-30 символов на строку для 240px ширины)
+        lv_obj_set_style_text_font(label_line[i], &roboto_condensed_20, 0);
         lv_obj_align(label_line[i], LV_ALIGN_TOP_LEFT, x_offset, y_pos);
         y_pos += line_height;
     }
