@@ -202,7 +202,6 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "✅ BLE Client connected! conn_handle=%d", conn_handle);
-            ESP_LOGI(TAG, "Waiting for client to enable notifications...");
             ESP_LOGI(TAG, "===========================================");
             int rc;
 
@@ -221,17 +220,10 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
                 ESP_LOGW(TAG, "Failed to update connection params: %d", rc);
             }
 
-            // ВАЖНО: Инициируем pairing сразу при подключении (для Display Only режима)
-            // Это заставит телефон запросить PIN-код ДО GATT discovery
-            ESP_LOGI(TAG, "Connection established, initiating security/pairing...");
-            rc = ble_gap_security_initiate(conn_handle);
-            if (rc != 0) {
-                ESP_LOGW(TAG, "Failed to initiate security: %d (error: %s)", rc,
-                         rc == BLE_HS_ENOTCONN ? "not connected" :
-                         rc == BLE_HS_EALREADY ? "already paired/pairing" : "other");
-            } else {
-                ESP_LOGI(TAG, "Security initiation started - waiting for PIN request");
-            }
+            // НЕ вызываем ble_gap_security_initiate()!
+            // Система автоматически запросит pairing только для новых (не bonded) устройств
+            // Для уже спаренных устройств будут использованы сохранённые ключи из NVS
+            ESP_LOGI(TAG, "Connection established. Bonding keys will be used if available.");
         }
         break;
 
